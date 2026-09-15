@@ -4,11 +4,27 @@
 
 설계 문서는 [AI 설계 Wiki](docs/wiki/Home.md)에서 관리합니다.
 
+
 ## 협업 원칙
 
 - 중요한 결정과 변경 이유는 Issue 또는 Pull Request에 남깁니다.
 - API 키, `.env`, 개인 환경 설정, 데이터셋과 모델 파일은 커밋하지 않습니다.
 - API 계약은 코드와 OpenAPI를 기준으로 관리합니다.
+
+
+## 커밋 메세지 컨벤션
+
+| Type | 설명 | 예시 |
+| :--- | :--- | :--- |
+| **feat** | 새로운 기능 추가 | `feat: 음악 추천 결과 미리듣기 기능 추가` |
+| **fix** | 버그 수정 | `fix: 추천곡 미리듣기 URL 누락 처리` |
+| **refactor** | 기능 변경 없는 코드 구조 개선 | `refactor: 음악 추천 파이프라인 모듈 분리` |
+| **chore** | 빌드, 패키지 설정 및 기타 변경 | `chore: FastAPI 의존성 버전 업데이트` |
+| **docs** | README, API 명세 등 문서 수정 | `docs: AI 챗봇 SSE 응답 명세 갱신` |
+| **style** | 동작 변화 없는 코드 형식 수정 | `style: FastAPI 코드 들여쓰기 정리` |
+| **test** | 테스트 코드 추가 및 수정 | `test: 음악 추천 API 응답 테스트 추가` |
+| **perf** | 성능 최적화 | `perf: pgvector 추천 검색 속도 개선` |
+
 
 ## 브랜치 전략
 
@@ -32,18 +48,4 @@ feat/recommendation-api
 fix/model-timeout
 experiment/retrieval-tuning
 docs/api-contract
-```
-
-## 작업 규칙
-
-- 하나의 Issue와 Pull Request는 하나의 독립적인 작업 목표를 다룹니다.
-- Pull Request에는 변경 이유, 핵심 내용, 검증 방법을 간략히 작성합니다.
-- 기능과 무관한 변경을 같은 Pull Request에 섞지 않습니다.
-- 커밋과 Pull Request 제목은 `type: 한국어 설명` 형식을 사용합니다.
-
-```text
-feat: 음악 추천 API 추가
-fix: 모델 응답 시간 초과 처리
-docs: API 계약 문서 보완
-chore: AI 협업 저장소 초기화
 ```
