@@ -1,0 +1,9 @@
+.DS_Store
+.venv/
+__pycache__/
+
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+.pytest_cache/
