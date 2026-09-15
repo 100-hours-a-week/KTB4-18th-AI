@@ -23,6 +23,7 @@ uv sync --locked
 - 중요한 결정과 변경 이유는 Issue 또는 Pull Request에 남깁니다.
 - API 키, `.env`, 개인 환경 설정, 데이터셋과 모델 파일은 커밋하지 않습니다.
 - API 계약은 코드와 OpenAPI를 기준으로 관리합니다.
+- Issue·PR 템플릿과 라벨 사용법은 [GitHub 협업 가이드](.github/github-협업-가이드.md)에서 관리합니다.
 
 
 ## 커밋 메세지 컨벤션
