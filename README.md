@@ -2,7 +2,7 @@
 
 사용자가 텍스트·음성·사진으로 남긴 순간과 분위기를 이해하고, 실제 재생 가능한 음악을 추천하는 **머문음**의 AI 전용 저장소입니다. AI 기능을 독립적으로 개발·검증한 뒤 합의된 API 계약으로 메인 서비스와 연동합니다.
 
-설계 문서는 [AI 설계 Wiki](docs/wiki/)에서 관리합니다. [설계 주차 과제](docs/wiki/99-설계주차-과제내용.md), [1주차](docs/wiki/week1/), [2주차](docs/wiki/week2/) 문서를 함께 수정하며 최신 상태를 공유합니다.
+설계 문서는 [AI 설계 Wiki](docs/wiki/)에서 관리합니다. [설계 주차 과제](docs/wiki/99-설계주차-과제내용.md), [1주차](docs/wiki/week1/), [2주차](docs/wiki/week2/) 문서를 함께 수정하며 최신 상태를 공유합니다. 외부 API 응답은 [iTunes Search API 곡 응답 필드](docs/reference/itunes-search-api-song-response.md)처럼 `docs/reference/`에 기록합니다.
 
 ## 개발 환경 준비
 
@@ -25,19 +25,6 @@ uv sync --locked
 - API 계약은 코드와 OpenAPI를 기준으로 관리합니다.
 - Issue·PR 템플릿과 라벨 사용법은 [GitHub 협업 가이드](.github/github-협업-가이드.md)에서 관리합니다.
 
-
-## 커밋 메세지 컨벤션
-
-| Type | 설명 | 예시 |
-| :--- | :--- | :--- |
-| **feat** | 새로운 기능 추가 | `feat: 음악 추천 결과 미리듣기 기능 추가` |
-| **fix** | 버그 수정 | `fix: 추천곡 미리듣기 URL 누락 처리` |
-| **refactor** | 기능 변경 없는 코드 구조 개선 | `refactor: 음악 추천 파이프라인 모듈 분리` |
-| **chore** | 빌드, 패키지 설정 및 기타 변경 | `chore: FastAPI 의존성 버전 업데이트` |
-| **docs** | README, API 명세 등 문서 수정 | `docs: AI 챗봇 SSE 응답 명세 갱신` |
-| **style** | 동작 변화 없는 코드 형식 수정 | `style: FastAPI 코드 들여쓰기 정리` |
-| **test** | 테스트 코드 추가 및 수정 | `test: 음악 추천 API 응답 테스트 추가` |
-| **perf** | 성능 최적화 | `perf: pgvector 추천 검색 속도 개선` |
 
 
 ## 브랜치 전략
@@ -63,4 +50,53 @@ feat/recommendation-api
 fix/model-timeout
 experiment/retrieval-tuning
 docs/api-contract
+```
+
+
+
+## 커밋 메세지 컨벤션
+
+| Type | 설명 | 예시 |
+| :--- | :--- | :--- |
+| **feat** | 새로운 기능 추가 | `feat: 음악 추천 결과 미리듣기 기능 추가` |
+| **fix** | 버그 수정 | `fix: 추천곡 미리듣기 URL 누락 처리` |
+| **refactor** | 기능 변경 없는 코드 구조 개선 | `refactor: 음악 추천 파이프라인 모듈 분리` |
+| **chore** | 빌드, 패키지 설정 및 기타 변경 | `chore: FastAPI 의존성 버전 업데이트` |
+| **docs** | README, API 명세 등 문서 수정 | `docs: AI 챗봇 SSE 응답 명세 갱신` |
+| **style** | 동작 변화 없는 코드 형식 수정 | `style: FastAPI 코드 들여쓰기 정리` |
+| **test** | 테스트 코드 추가 및 수정 | `test: 음악 추천 API 응답 테스트 추가` |
+| **perf** | 성능 최적화 | `perf: pgvector 추천 검색 속도 개선` |
+
+
+## 코드 주석 컨벤션
+
+주석은 코드만 읽어도 알 수 있는 동작보다 **설계 이유, 제약 조건, 임시 처리의 종료 조건**을 설명합니다. 작업 추적이 필요하면 `# 태그(#이슈번호): 내용` 형식으로 작성하고, 이슈가 아직 없거나 짧게 끝날 작업은 이슈 번호를 생략할 수 있습니다.
+
+| 태그 | 용도 | 프로젝트 예시 |
+| :--- | :--- | :--- |
+| **TODO** | 현재 동작에는 문제가 없지만 후속 구현이나 정책 확정이 필요한 작업 | `# TODO(#42): 음악 DB 구축 후 pgvector 검색으로 교체한다.` |
+| **FIXME** | 현재 알려진 버그나 잘못된 동작으로 수정이 필요한 부분 | `# FIXME(#51): 동일한 request_id의 중복 처리를 방지한다.` |
+| **HACK** | 일정이나 외부 의존성 때문에 사용한 임시 우회 구현 | `# HACK(#63): 음악 DB 구축 전까지 Last.fm 후보를 iTunes에서 검증한다.` |
+| **NOTE** | 코드만으로 알기 어려운 설계 의도나 외부 API 제약 | `# NOTE: iTunes는 일부 곡에 previewUrl을 제공하지 않는다.` |
+| **DEPRECATED** | 제거 예정이므로 새 코드에서 사용하지 않아야 하는 기능 | `# DEPRECATED(#71): pgvector 전환 후 임시 외부 API 검색과 함께 제거한다.` |
+
+`XXX`는 의미가 모호하고 `OPTIMIZE`는 성능 개선의 근거가 불분명해지기 쉬우므로 사용하지 않습니다. 위험한 코드는 `FIXME`, 측정된 성능 문제는 GitHub Issue와 `perf` 커밋으로 관리합니다.
+
+### 위치와 줄바꿈
+
+- 클래스·함수 Docstring은 선언 바로 아래에 작성합니다. 클래스 Docstring 다음에는 한 줄을 띄우고, 함수 Docstring 다음에는 함수 본문을 바로 작성합니다.
+- `TODO`처럼 코드 블록 전체에 적용되는 주석은 대상 바로 위에 같은 깊이로 작성하며, 대상 코드와 사이에 빈 줄을 넣지 않습니다.
+- 인라인 주석은 단위, 값의 출처, 짧은 도메인 의미를 설명할 때만 사용하고 코드 뒤에 공백을 두 칸 이상 둡니다.
+- 여러 필드나 여러 줄에 같은 설명이 적용되면 인라인 주석을 반복하지 않고 바로 위에 한 번만 작성합니다.
+- 변수명이나 코드 동작을 그대로 번역하는 주석은 작성하지 않습니다.
+
+```python
+class Track(BaseModel):
+    """추천곡 메타데이터 응답 모델."""
+
+    # TODO(#42): 음악 DB 구축 후 식별자와 URL 필드를 최종 API 계약에 맞게 갱신한다.
+    track_id: str  # 현재 iTunes track ID 사용
+    title: str
+    artist: str
+    preview_url: str | None  # 30초 미리듣기 URL
 ```
