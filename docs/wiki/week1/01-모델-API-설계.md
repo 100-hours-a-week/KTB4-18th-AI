@@ -102,16 +102,16 @@ sequenceDiagram
             else 조회 가능한 곡이 없음
                 M-->>W: 검색 결과 없음
                 W-->>A: 빈 추천 결과
-                A-->>S: 200 tracks=[] 및 안내 메시지
-                S-->>F: 추천 결과 없음 반환
+                A-->>S: SSE text → tracks=[] → done
+                S-->>F: SSE 이벤트 전달
                 F-->>U: 다른 분위기 입력 안내
             else iTunes 조회 성공
                 M-->>W: 실제 곡 정보와 미리듣기 URL
                 W->>W: 중복 제거 및 필수 필드 검증
                 W->>W: 추천 결과 최대 5개 적용
                 W-->>A: 최종 추천 결과
-                A-->>S: 200 tracks 반환
-                S-->>F: 추천 결과 반환
+                A-->>S: SSE text 반복 → tracks → done
+                S-->>F: SSE 이벤트 전달
                 F-->>U: 추천곡 카드 표시
             end
         end
@@ -123,6 +123,7 @@ sequenceDiagram
 - 사용자가 전송을 확정한 메시지만 추천에 사용한다.
 - 모델이 생성한 곡을 그대로 반환하지 않고 iTunes에서 실제 곡 정보를 확인한다.
 - 음악 제목, 아티스트, 앨범 이미지와 미리듣기 URL을 정규화하여 반환한다.
+- 챗봇 안내 문장은 `text` 이벤트로 스트리밍하고, 추천곡 카드는 검증이 끝난 배열을 `tracks` 이벤트로 한 번만 반환한다.
 - 검색 결과가 없는 경우는 장애가 아니므로 `200`과 빈 목록, 안내 메시지로 처리한다.
 - RAG는 내부 음악 데이터가 구축되고 도입 효과가 확인된 경우에만 실행한다.
 
@@ -445,7 +446,7 @@ sequenceDiagram
 | 제품 범위 | API | 역할 | 필수 요청값 | 선택 요청값 | 성공 응답 |
 |---|---|---|---|---|---|
 | V1~V3 | `GET /health` | AI 서버 실행 상태 확인 | 없음 | 없음 | `status` |
-| V1 | `POST /v1/chat/messages` | 확정 텍스트 기반 음악 추천 | `thread_id`<br>`request_id`<br>`message` | `user_context` | `message`<br>`tracks` |
+| V1 | `POST /v1/chat/messages` | 확정 텍스트 기반 음악 추천 | `thread_id`<br>`request_id`<br>`message` | `user_context` | SSE `text`<br>`tracks`<br>`done` 또는 `error` |
 | V1 | `POST /v1/transcriptions` | 음성을 수정 가능한 텍스트 초안으로 변환 | `audio_base64`<br>`mime_type` | 없음 | `transcript` |
 | V2 | `POST /v1/chat/images` | 풍경 사진 기반 음악 추천 | `thread_id`<br>`request_id`<br>`image_base64`<br>`mime_type` | `user_context` | `message`<br>`tracks` |
 | V3 | `POST /v1/location/recommendations` | 위치·날씨·주변 장소 기반 음악 추천 | `latitude`<br>`longitude` | `user_context` | `message`<br>`tracks` |
@@ -473,8 +474,8 @@ sequenceDiagram
 | 중복 처리 | 텍스트와 사진 추천은 요청마다 발급한 `request_id`로 재시도와 중복 요청을 식별한다. |
 | 사용자 확정 | 음성 전사 결과는 추천 입력이 아닌 수정 가능한 초안이다. 사용자가 확인·수정한 뒤 `/v1/chat/messages`로 전송해야 추천을 실행한다. |
 | 외부 결과 검증 | 외부 모델과 iTunes의 응답은 신뢰하지 않는다. iTunes에서 실제 곡 정보와 링크를 확인하고, 응답 스키마의 필수 필드와 형식을 검증한다. |
-| 실패 처리 | 입력 오류, 미디어 오류, 모델 장애, 음악 카탈로그 장애를 구분한다. 추천 결과가 없는 경우는 장애가 아니므로 `200`과 `tracks: []`를 반환한다. |
-| 응답 계약 | 텍스트·사진·위치 추천은 같은 음악 추천 응답을 사용한다. 음성 전사는 추천 결과 대신 수정 가능한 `transcript` 초안을 반환한다. |
+| 실패 처리 | 입력 오류, 미디어 오류, 모델 장애, 음악 카탈로그 장애를 구분한다. SSE 시작 전 오류는 HTTP 오류 응답으로, 시작 후 오류는 `error` 이벤트로 반환한다. 추천 결과가 없는 경우는 `tracks: []` 이벤트로 반환한다. |
+| 응답 계약 | V1 텍스트 추천은 안내 문장을 `text` 이벤트로 스트리밍하고, 완성된 추천곡 배열을 `tracks` 이벤트로 한 번 반환한다. 음성 전사는 수정 가능한 `transcript` 초안을 반환한다. |
 | 버전 | 제품 범위 V1·V2·V3와 API 계약 버전 `/v1`은 서로 다른 개념이다. 새 제품 기능의 첫 계약도 `/v1`에서 시작할 수 있다. |
 
 ## 공통 데이터 계약
@@ -497,14 +498,16 @@ sequenceDiagram
 | `gender` | string | 선택 | 개인화 보조 정보로만 사용한다. |
 | `preferred_genres` | array&lt;string&gt; | 선택 | 선호 장르 목록이며 추천 후보 생성과 정렬에 활용한다. |
 
-### 음악 추천 공통 응답
+### 음악 추천 SSE 응답
 
-텍스트·사진·위치 추천은 동일한 성공 응답을 사용한다. 각 API의 `200 OK`에서는 아래의 `message`, `tracks`, `track` 필드를 함께 참조한다.
+V1 텍스트 추천은 `200 OK` 연결을 유지하면서 다음 이벤트를 순서대로 반환한다. `text`는 여러 번 올 수 있고, `tracks`와 `done`은 정상 응답에서 한 번만 온다.
 
-| 필드 | 타입 | 필수 여부 | 설명 |
-|---|---|---|---|
-| `message` | string | 필수 | 추천 결과 또는 결과 없음에 대한 사용자 안내 문구 |
-| `tracks` | array&lt;track&gt; | 필수 | 추천곡 목록. 최소 0개, 최대 5개 |
+| 이벤트 | `data` 필드 | 설명 |
+|---|---|---|
+| `text` | `delta: string` | 화면에 이어 붙일 추천 안내 문장 조각 |
+| `tracks` | `tracks: array<track>` | 검증과 정제가 끝난 추천곡 전체 목록. 최소 0개, 최대 5개 |
+| `done` | 빈 객체 | 정상 스트림 종료 |
+| `error` | `detail: string` | 스트리밍 시작 후 발생한 오류 |
 
 #### `track` 객체
 
@@ -518,30 +521,31 @@ sequenceDiagram
 | `store_url` | string | 필수 | 곡 상세 페이지로 연결되는 HTTPS URL |
 | `reason` | string | 필수 | 현재 입력·맥락과 해당 곡이 어울리는 이유 |
 
-```json
-{
-  "message": "현재 분위기에 어울리는 곡을 골라봤어요.",
-  "tracks": [
-    {
-      "title": "노을",
-      "artist": "카더가든",
-      "track_id": "1234567890",
-      "preview_url": "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview/example1.m4a",
-      "artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Music/example1/600x600bb.jpg",
-      "store_url": "https://music.apple.com/kr/album/example1?i=1234567890",
-      "reason": "해질녘의 따뜻한 색감과 잔잔한 기타 사운드가 잘 어울려요."
-    }
-  ]
-}
+```text
+event: text
+data: {"delta":"현재 분위기에 "}
+
+event: text
+data: {"delta":"어울리는 곡을 골라봤어요."}
+
+event: tracks
+data: {"tracks":[{"title":"노을","artist":"카더가든","track_id":"1234567890","preview_url":"https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview/example1.m4a","artwork_url":"https://is1-ssl.mzstatic.com/image/thumb/Music/example1/600x600bb.jpg","store_url":"https://music.apple.com/kr/album/example1?i=1234567890","reason":"해질녘의 따뜻한 색감과 잔잔한 기타 사운드가 잘 어울려요."}]}
+
+event: done
+data: {}
 ```
 
-추천 가능한 곡이 없으면 오류 대신 다음과 같이 반환한다.
+추천 가능한 곡이 없으면 오류 대신 안내 문장과 빈 추천곡 배열을 반환한다.
 
-```json
-{
-  "message": "조건에 맞는 곡을 찾지 못했어요. 다른 분위기로 다시 요청해 주세요.",
-  "tracks": []
-}
+```text
+event: text
+data: {"delta":"조건에 맞는 곡을 찾지 못했어요. 다른 분위기로 다시 요청해 주세요."}
+
+event: tracks
+data: {"tracks":[]}
+
+event: done
+data: {}
 ```
 
 ### 공통 오류 응답
@@ -608,7 +612,7 @@ Spring Backend, 배포 플랫폼 또는 모니터링 시스템이 FastAPI 프로
 
 #### 성공 응답
 
-`200 OK`와 공통 음악 추천 응답을 반환한다. `message`와 `tracks`는 필수이며, `tracks`의 각 항목은 공통 `track` 객체를 따른다.
+`200 OK`와 `text/event-stream`으로 응답한다. 안내 문장은 `text` 이벤트로 스트리밍하고, 검증이 끝난 전체 추천곡은 `tracks` 이벤트로 한 번 반환한 뒤 `done`으로 종료한다.
 
 #### 오류 응답
 
@@ -617,6 +621,8 @@ Spring Backend, 배포 플랫폼 또는 모니터링 시스템이 FastAPI 프로
 | `400` | `INVALID_REQUEST` | 없음 | UUID 형식, 메시지 길이 등 요청값이 계약에 맞지 않음 |
 | `503` | `SERVICE_UNAVAILABLE` | `MODEL_UNAVAILABLE` | 모델 제공자를 호출할 수 없음 |
 | `503` | `SERVICE_UNAVAILABLE` | `MUSIC_CATALOG_UNAVAILABLE` | iTunes 음악 조회를 사용할 수 없음 |
+
+SSE 응답을 시작하기 전에 발생한 오류는 위 HTTP 오류 응답을 사용한다. `text` 이벤트를 전송한 뒤 발생한 오류는 HTTP 상태를 변경할 수 없으므로 `error` 이벤트를 보내고 스트림을 종료한다.
 
 ### 3. 음성 전사
 
@@ -682,7 +688,7 @@ Spring Backend, 배포 플랫폼 또는 모니터링 시스템이 FastAPI 프로
 
 #### 성공 응답
 
-`200 OK`와 공통 음악 추천 응답을 반환한다. `message`와 `tracks`는 필수이며, `tracks`의 각 항목은 공통 `track` 객체를 따른다.
+제품 V2 구현 전에 응답 전송 방식을 확정한다. 추천곡 데이터는 위에서 정의한 공통 `track` 객체를 따른다.
 
 #### 오류 응답
 
@@ -718,7 +724,7 @@ Spring Backend, 배포 플랫폼 또는 모니터링 시스템이 FastAPI 프로
 
 #### 성공 응답
 
-`200 OK`와 공통 음악 추천 응답을 반환한다. `message`와 `tracks`는 필수이며, `tracks`의 각 항목은 공통 `track` 객체를 따른다.
+제품 V3 구현 전에 응답 전송 방식을 확정한다. 추천곡 데이터는 위에서 정의한 공통 `track` 객체를 따른다.
 
 #### 오류 응답
 
