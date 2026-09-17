@@ -20,11 +20,13 @@ dev = [
 # 설치: uv sync --group worker
 worker = [
     "numpy<2",
-    "essentia-tensorflow",
+    # 최신(2.1b6.dev1438)은 cp314 휠만 배포하는 깨진 릴리스라 그 직전 버전으로 고정
+    "essentia-tensorflow==2.1b6.dev1389",
+    "pgvector>=0.5.0",
+    "psycopg[binary]>=3.3.5",
     "torch",
     "torchvision",
     "laion-clap",
     "imageio-ffmpeg",
     "sqlalchemy",
-    "psycopg",
 ]
