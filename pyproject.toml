@@ -16,7 +16,7 @@ dev = [
     "pytest>=9.1.1",
 ]
 
-# (논의사항) 배치 워커 전용으로 할까? essentia/torch가 무거워 API 배포 이미지에는 넣지 않는 방식.
+# TODO: 배치 워커 전용으로 할까? essentia/torch가 무거워 API 배포 이미지에는 넣지 않는 방식.
 # 설치: uv sync --group worker
 worker = [
     "numpy<2",

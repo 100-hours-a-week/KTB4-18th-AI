@@ -1,13 +1,17 @@
 import os
 from datetime import date, datetime
+from pathlib import Path
 
 import numpy as np
+from dotenv import load_dotenv
 from sqlalchemy import (
     JSON, BigInteger, Date, DateTime, String, Text, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///music.db")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 EMB_DIM = 512
 MODEL_VERSION = "laion-clap-htsat-fused"
@@ -32,6 +36,8 @@ class Track(Base):
 
     preview_url: Mapped[str] = mapped_column(Text, nullable=True)
     artwork_url: Mapped[str] = mapped_column(Text, nullable=True)
+    store_url: Mapped[str] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(nullable=True)
 
     seed_artist: Mapped[str] = mapped_column(Text, nullable=True)
     bucket: Mapped[str] = mapped_column(String(32), nullable=True)
