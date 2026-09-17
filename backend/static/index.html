@@ -1,0 +1,284 @@
+<!-- AI API를 UI 수준에서 수동 테스트하는 개발용 콘솔 -->
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat Console — 음악 추천 챗봇</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <style>
+    :root { --accent: #3457c7; --ink: #1f1f23; --line: #e7e7ea; --surface: #f6f7f9; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; color: var(--ink); background: #ededef; font-family: Pretendard, "Apple SD Gothic Neo", sans-serif; }
+    button, input { font: inherit; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .app { display: flex; flex-direction: column; height: 100vh; max-width: 1400px; margin: auto; background: white; box-shadow: 0 0 0 1px #e4e4e7; }
+    .topbar { display: flex; flex: 0 0 64px; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid #ececef; }
+    .brand, .topright, .pill, .conn-name, .statusgroup, .inputrow, .metaline { display: flex; align-items: center; }
+    .brand { gap: 12px; }
+    .glyph { display: grid; width: 34px; height: 34px; place-items: center; color: white; background: var(--ink); border-radius: 10px; }
+    .title { font-size: 16px; font-weight: 700; }
+    .subtitle { margin-top: 1px; color: #8a8d94; font-size: 12px; }
+    .topright { gap: 10px; }
+    .pill { gap: 7px; height: 30px; padding: 0 12px; color: #5f6168; background: #fbfbfc; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
+    .pill.env { color: #3a3b40; background: #f0f0f2; border-color: #f0f0f2; font-weight: 600; }
+    .dot { width: 8px; height: 8px; background: #c2c4c9; border-radius: 50%; }
+    .dot.ok { background: #22b07d; box-shadow: 0 0 0 3px #22b07d2e; }
+    .dot.err { background: #d64541; box-shadow: 0 0 0 3px #d6454128; }
+    .body { display: flex; flex: 1; min-width: 0; min-height: 0; }
+    .chatpane { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; border-right: 1px solid #ececef; }
+    .inspane { display: flex; flex: 0 0 452px; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+    .chathead { display: flex; flex: 0 0 56px; align-items: center; gap: 10px; padding: 0 20px; border-bottom: 1px solid #f0f0f2; }
+    .chathead .h-title { flex: 1; text-align: center; font-size: 15px; font-weight: 700; }
+    .ghostbtn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; color: #5f6168; background: #fff; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 12.5px; }
+    .ghostbtn:hover { color: var(--ink); border-color: #d6d6da; }
+    .msgscroll { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 22px 22px 8px; }
+    .divider { display: flex; justify-content: center; margin: 6px 0 20px; }
+    .divider span { padding: 6px 16px; color: #5f6168; background: #f0f0f2; border-radius: 999px; font-size: 12.5px; }
+    .msgrow { display: flex; flex-direction: column; margin-bottom: 18px; }
+    .msgrow.left { align-items: flex-start; }
+    .msgrow.right { align-items: flex-end; }
+    .bubble { min-width: 0; max-width: 74%; padding: 14px 17px; border-radius: 22px; font-size: 15px; line-height: 1.62; letter-spacing: -.2px; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .bubble.bot { color: #26272b; background: #f0f0f2; border-bottom-left-radius: 8px; }
+    .bubble.user { color: white; background: var(--ink); border-bottom-right-radius: 8px; }
+    .bubble.pending { opacity: .55; }
+    .bot-answer:empty::after { content: "추천을 준비하고 있어요…"; color: #9a9ca3; }
+    .track-list { display: grid; width: min(520px, 86%); gap: 10px; margin-top: 8px; }
+    .track-list:not(:empty)::before { content: "이런 곡은 어떠세요?"; padding: 0 4px 2px; color: #777a82; font-size: 13px; }
+    .track-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 12px; background: #f0f0f2; border-radius: 18px; }
+    .track-art { width: 64px; height: 64px; object-fit: cover; background: #e3e3e7; border-radius: 12px; }
+    .track-art.empty { display: grid; place-items: center; color: #9a9ca3; font-size: 20px; }
+    .track-copy { min-width: 0; }
+    .track-title { overflow: hidden; font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .track-artist { margin-top: 3px; overflow: hidden; color: #777a82; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+    .track-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-top: 9px; }
+    .preview-btn { padding: 6px 10px; color: #34353a; background: white; border: 1px solid #d7d8dd; border-radius: 9px; cursor: pointer; font-size: 12px; }
+    .preview-btn.playing { color: white; background: var(--ink); border-color: var(--ink); }
+    .source-link { color: #747780; font-size: 11px; text-decoration: none; }
+    .source-link:hover { text-decoration: underline; }
+    .greeting { display: grid; gap: 12px; }
+    .greeting-mark { display: grid; place-items: center; width: 28px; height: 28px; color: var(--accent); background: #e9edfb; border-radius: 10px; font-size: 15px; line-height: 1; }
+    .greeting-copy { white-space: pre-wrap; }
+    .greeting-save { display: flex; gap: 6px; align-items: center; padding-top: 12px; color: #666971; border-top: 1px solid #dedee2; font-size: 13px; line-height: 1.45; white-space: normal; }
+    .metaline { gap: 8px; min-width: 0; margin-top: 6px; padding: 0 4px; }
+    .metaline.right { flex-direction: row-reverse; }
+    .time { color: #a6a8ae; font-size: 11.5px; }
+    .srctag { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+    .srctag.text { color: #6b6d74; background: #f0f0f2; }
+    .srctag.voice { color: var(--accent); background: #edf0fb; }
+    .errnote { margin-top: 6px; padding: 0 4px; color: #c0362c; font-size: 12px; overflow-wrap: anywhere; }
+    .composer { flex: 0 0 auto; padding: 14px 20px 18px; border-top: 1px solid #f0f0f2; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .chips:empty { display: none; }
+    .ctxchip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 12px; font-size: 12.5px; }
+    .ctxchip.voice { color: var(--accent); background: #edf0fb; border: 1px solid #cbd4f7; }
+    .ctxchip.rec { color: #c0362c; background: #fceef0; border: 1px solid #f4cdd3; }
+    .ctxchip.photo { color: #5f6168; background: #f5f6f8; border: 1px solid var(--line); }
+    .ctxchip .x { cursor: pointer; font-size: 16px; line-height: 1; opacity: .7; }
+    .ctxchip .x:hover { opacity: 1; }
+    .tag-plan { padding: 1px 6px; color: #8a8d94; background: #edeeF1; border-radius: 5px; font-size: 10.5px; font-weight: 600; }
+    .blink { width: 8px; height: 8px; background: #d64541; border-radius: 50%; animation: blink 1s steps(2, start) infinite; }
+    @keyframes blink { to { opacity: 0; } }
+    .inputrow { gap: 10px; min-width: 0; }
+    .textfield { flex: 1; min-width: 0; height: 50px; padding: 0 20px; color: var(--ink); outline: none; background: #f7f7f8; border: 1px solid #e4e4e7; border-radius: 25px; font-size: 15px; }
+    .textfield:focus { background: white; border-color: var(--accent); box-shadow: 0 0 0 3px #3457c728; }
+    .iconbtn { display: inline-grid; flex: 0 0 auto; width: 46px; height: 46px; place-items: center; color: white; background: var(--ink); border: 0; border-radius: 50%; cursor: pointer; }
+    .iconbtn:hover { background: #000; }
+    .iconbtn.ghost { color: var(--ink); background: #fff; border: 1px solid var(--line); }
+    .iconbtn.on { color: var(--accent); background: #edf0fb; border-color: #cbd4f7; }
+    .iconbtn.rec { color: white; background: #d64541; }
+    .hint { margin-top: 10px; color: #a6a8ae; text-align: center; font-size: 11.5px; }
+    .hint b { color: #7a7c82; }
+    .insphead { flex: 0 0 auto; padding: 18px 20px 12px; }
+    .insphead .t { font-size: 13px; font-weight: 700; }
+    .insphead .s { margin-top: 2px; color: #9a9ca3; font-size: 11.5px; }
+    .inspbody { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 4px 20px 22px; }
+    .card, .sect, .jsonpre { background: white; border: 1px solid #eaebee; border-radius: 14px; }
+    .card { padding: 14px 15px; margin-bottom: 12px; }
+    .conn-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .conn-name { gap: 8px; min-width: 0; color: #3a3b40; font-size: 12.5px; font-weight: 500; overflow-wrap: anywhere; }
+    .statusgroup { gap: 8px; }
+    .statusbadge { padding: 3px 10px; color: #6b6d74; background: #f0f0f2; border-radius: 8px; font-size: 12px; font-weight: 600; }
+    .statusbadge.ok { color: #12805c; background: #e6f4ee; }
+    .statusbadge.err { color: #c0362c; background: #fbebea; }
+    .lat { color: #9a9ca3; font-size: 11.5px; }
+    .kv { display: flex; justify-content: space-between; padding: 7px 0; border-top: 1px solid #f2f2f4; }
+    .kv .k { color: #8a8d94; font-size: 12px; }
+    .kv .v { min-width: 0; font-size: 12.5px; overflow-wrap: anywhere; text-align: right; }
+    .method, .logrow .lm { color: #12805c; font-weight: 600; }
+    .blocktitle { display: flex; justify-content: space-between; margin: 0 2px 7px; }
+    .blocktitle .bt { color: #6b6d74; font-size: 12px; font-weight: 600; }
+    .jsonpre { min-width: 0; margin: 0 0 12px; padding: 13px 15px; overflow-x: auto; color: #26272b; font-size: 12.5px; line-height: 1.75; white-space: pre; }
+    .jsonpre.err { color: #7a2e27; background: #fcf3f2; border-color: #f3d9d6; }
+    .jsonpre .k { color: #3a5bc7; }.jsonpre .s { color: #1f7a54; }.jsonpre .n { color: #b4531a; }
+    .placeholder, .empty { color: #b0b2b8; font-size: 12.5px; }
+    .sect { margin-bottom: 12px; overflow: hidden; }
+    .secthead { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 13px 15px; background: white; border: 0; cursor: pointer; }
+    .secthead.static { cursor: default; }
+    .secthead .st { color: #3a3b40; font-size: 12.5px; font-weight: 600; }
+    .chev { transition: transform .18s; }.chev.open { transform: rotate(180deg); }
+    .schtable { padding: 2px 15px 14px; }
+    .schcap { padding: 6px 0 2px; color: #9a9ca3; font-size: 11px; }
+    .schrow { display: grid; grid-template-columns: 84px 62px minmax(0, 1fr); gap: 8px; padding: 7px 0; border-top: 1px solid #f2f2f4; }
+    .schrow .f { font-size: 12px; font-weight: 500; }.schrow .ty { color: #6b6d74; font-size: 11px; }.schrow .rule { min-width: 0; color: #9a9ca3; font-size: 11.5px; overflow-wrap: anywhere; }
+    .logrow { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid #f2f2f4; font-size: 12px; }.logrow:first-child { border-top: 0; }
+    .logrow .lm { width: 40px; }.logrow .lp { flex: 1; min-width: 0; overflow-wrap: anywhere; }.logrow .lst { font-weight: 600; }.logrow .lst.ok { color: #12805c; }.logrow .lst.err { color: #c0362c; }.logrow .lt { width: 70px; color: #b0b2b8; text-align: right; }
+    @media (max-width: 900px) { .inspane { display: none; }.chatpane { border-right: 0; }.bubble { max-width: 86%; } }
+    @media (max-width: 540px) { .topbar { height: auto; min-height: 64px; padding: 10px 14px; }.topright { display: none; }.chathead { padding: 0 14px; }.msgscroll { padding: 18px 14px 8px; }.composer { padding: 12px 14px 14px; }.bubble { max-width: 92%; }.schrow { grid-template-columns: 72px 52px minmax(0, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">FastAPI 로컬 테스트 · 텍스트 API 수동 테스트</div></div></div>
+      <div class="topright"><span class="pill env">로컬 개발</span><span class="pill"><span class="dot" id="connDot"></span><span class="mono" id="connText">대기 중</span></span></div>
+    </header>
+    <div class="body">
+      <main class="chatpane">
+        <div class="chathead"><span>‹</span><div class="h-title">음악 추천 챗봇</div><button class="ghostbtn" id="resetBtn" type="button">↻ 초기화</button></div>
+        <section class="msgscroll" id="msgScroll" aria-live="polite"></section>
+        <div class="composer">
+          <div class="chips" id="chips"></div>
+          <div class="inputrow">
+            <button class="iconbtn ghost" id="photoBtn" type="button" title="풍경 사진 첨부 (멀티모달 예정)">▣</button>
+            <input class="textfield" id="input" type="text" maxlength="200" placeholder="메시지를 입력하세요…" autocomplete="off">
+            <button class="iconbtn" id="voiceBtn" type="button" title="음성(STT) 입력">≋</button>
+            <button class="iconbtn" id="sendBtn" type="button" title="전송 (Enter)">↑</button>
+          </div>
+          <div class="hint"><b>Enter</b>로 전송 · 음성 인식 결과는 텍스트로 전송 · 사진 입력은 멀티모달 API 연동 예정</div>
+        </div>
+      </main>
+      <aside class="inspane">
+        <div class="insphead"><div class="t">인스펙터</div><div class="s">마지막 <b class="mono">POST /v1/chat/messages</b> 요청·응답</div></div>
+        <div class="inspbody">
+          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> /v1/chat/messages</span></div><div class="kv"><span class="k">응답 방식</span><span class="v">text/event-stream</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
+          <div class="blocktitle"><span class="bt">요청 본문 (Request)</span></div><pre class="jsonpre" id="reqBox"><span class="placeholder">아직 보낸 요청이 없습니다.</span></pre>
+          <div class="blocktitle"><span class="bt">응답 본문 (Response)</span><span class="mono" id="respMini" style="font-size:11px;color:#9a9ca3"></span></div><pre class="jsonpre" id="resBox"><span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span></pre>
+          <section class="sect"><button class="secthead" id="schemaHead" type="button"><span class="st">요청 · 응답 스키마</span><span class="chev open" id="schemaChev">⌄</span></button><div class="schtable" id="schemaBody"><div class="schcap">ChatRequest — 요청</div><div class="schrow"><span class="f mono">thread_id</span><span class="ty mono">UUID</span><span class="rule">채팅 세션 동안 유지</span></div><div class="schrow"><span class="f mono">request_id</span><span class="ty mono">UUID</span><span class="rule">요청마다 새로 발급</span></div><div class="schrow"><span class="f mono">message</span><span class="ty mono">string</span><span class="rule">필수 · 공백 불가 · ≤ 200자</span></div><div class="schcap" style="margin-top:6px">SSE — 응답</div><div class="schrow"><span class="f mono">text</span><span class="ty mono">delta</span><span class="rule">OpenAI 한국어 텍스트 조각</span></div><div class="schrow"><span class="f mono">tracks</span><span class="ty mono">array</span><span class="rule">iTunes 미리듣기 곡 목록</span></div></div></section>
+          <section class="sect"><div class="secthead static"><span class="st">호출 로그</span></div><div class="schtable" id="logBody"><div class="empty">아직 호출 기록이 없습니다.</div></div></section>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script>
+    "use strict";
+    const CHAT_URL = "/v1/chat/messages";
+    const state = { source: "text", photoAttached: false, recording: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
+    const $ = (id) => document.getElementById(id);
+    const scroll = $("msgScroll");
+
+    function nowLabel() { const d = new Date(); const ap = d.getHours() < 12 ? "오전" : "오후"; return `${ap} ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}`; }
+    function esc(value) { return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;"); }
+    function jsonHtml(value) { return esc(JSON.stringify(value, null, 2)).replace(/&quot;([^&]+?)&quot;(\s*:)/g, '<span class="k">&quot;$1&quot;</span>$2').replace(/:\s(&quot;.*?&quot;)/g, ': <span class="s">$1</span>').replace(/:\s(-?\d+(?:\.\d+)?)/g, ': <span class="n">$1</span>'); }
+    function scrollToBottom() { scroll.scrollTop = scroll.scrollHeight; }
+    function addDivider(text) { const el = document.createElement("div"); el.className = "divider"; el.innerHTML = `<span>${esc(text)}</span>`; scroll.append(el); }
+    function addGreeting() { const el = document.createElement("div"); el.className = "msgrow left"; el.innerHTML = `<div class="bubble bot greeting"><span class="greeting-mark" aria-hidden="true">♪</span><div class="greeting-copy">지금 어떤 순간에 머물고 있나요?\n\n날씨나 장소, 느껴지는 기분을 편하게 알려주세요.\n글로 적어 주시거나 음성으로 말해도 좋아요.\n지금 딱 어울리는 음악을 골라드릴게요.</div><div class="greeting-save"><span aria-hidden="true">🔖</span><span>추천받은 곡은 챗봇 추천에 모아둘게요.</span></div></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(el); }
+    function addUserBubble(text, source) { const row = document.createElement("div"); row.className = "msgrow right"; const label = source === "voice" ? "음성 인식" : "텍스트"; row.innerHTML = `<div class="bubble user pending">${esc(text)}</div><div class="metaline right"><span class="time">${nowLabel()}</span><span class="srctag ${source}">${label}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
+    function addBotResponse() { const row = document.createElement("div"); row.className = "msgrow left"; row.innerHTML = `<div class="bubble bot bot-answer"></div><div class="track-list"></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
+    function addTrackCards(container, tracks) { container.innerHTML = tracks.map((track) => `<article class="track-card">${track.artwork_url ? `<img class="track-art" src="${esc(track.artwork_url)}" alt="${esc(track.title)} 앨범 표지">` : '<div class="track-art empty">♪</div>'}<div class="track-copy"><div class="track-title">${esc(track.title)}</div><div class="track-artist">${esc(track.artist)}</div><div>${esc(track.reason)}</div><div class="track-actions">${track.preview_url ? `<button class="preview-btn" type="button" data-preview="${esc(track.preview_url)}">▶ 미리듣기 · iTunes 제공</button>` : ""}<a class="source-link" href="${esc(track.store_url)}" target="_blank" rel="noopener">iTunes에서 보기</a></div></div></article>`).join(""); scrollToBottom(); }
+    function setConnection(kind, label) { const cls = kind === "ok" ? "dot ok" : kind === "err" ? "dot err" : "dot"; $("connDot").className = cls; $("connDot2").className = cls; $("connText").textContent = label; }
+    function setStatus(kind, code, text, latency) { const badge = $("statusBadge"); if (kind === "idle") { badge.className = "statusbadge"; badge.textContent = "대기 중"; $("latText").textContent = "—"; $("respMini").textContent = ""; return; } badge.className = kind === "ok" ? "statusbadge ok" : "statusbadge err"; badge.textContent = `${code} ${text}`; $("latText").textContent = latency == null ? "—" : `${latency}ms`; $("respMini").textContent = code; }
+    function setReqBox(value) { $("reqBox").innerHTML = jsonHtml(value); }
+    function setResBox(value, error) { const box = $("resBox"); box.className = error ? "jsonpre err" : "jsonpre"; box.innerHTML = jsonHtml(value); }
+    function pushLog(status) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">/v1/chat/messages</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
+    function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>듣고 있어요… 말이 끝나면 자동 전송돼요<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">음성 인식 결과도 텍스트로 전송됩니다<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진 입력은 준비 중입니다 <span class="tag-plan">멀티모달 예정</span><span class="x" data-act="removePhoto">×</span></span>'; $("chips").innerHTML = html; }
+    function refreshControls() { $("voiceBtn").className = "iconbtn" + (state.recording ? " rec" : state.source === "voice" ? " on" : ""); $("photoBtn").className = "iconbtn ghost" + (state.photoAttached ? " on" : ""); }
+
+    async function send() {
+      const input = $("input");
+      const raw = input.value.trim();
+      if (!raw) return;
+      const userRow = addUserBubble(raw, state.source);
+      const body = { thread_id: state.threadId, request_id: crypto.randomUUID(), message: raw };
+      setReqBox(body);
+      input.value = "";
+      setConnection("", "음악 검색 중");
+      const started = performance.now();
+      let response;
+      try {
+        response = await fetch(CHAT_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      } catch (error) {
+        setConnection("err", "연결 실패"); setStatus("err", "ERR", "No response", null); setResBox({ error: "서버에 연결하지 못했습니다. uvicorn 실행 상태를 확인하세요.", detail: String(error) }, true); userRow.querySelector(".bubble").classList.remove("pending"); const note = document.createElement("div"); note.className = "errnote"; note.textContent = "전송 실패 — 서버 미응답"; userRow.append(note); pushLog("ERR"); return;
+      }
+      userRow.querySelector(".bubble").classList.remove("pending");
+      if (!response.ok) {
+        let data;
+        try { data = await response.json(); } catch { data = { detail: "응답이 JSON 형식이 아닙니다." }; }
+        const latency = Math.round(performance.now() - started);
+        setConnection("err", "요청 실패"); setStatus("err", response.status, response.statusText || "Error", latency); setResBox(data, true); const note = document.createElement("div"); note.className = "errnote"; note.textContent = `요청 거부됨 (${response.status})`; userRow.append(note); pushLog(response.status); return;
+      }
+
+      const botRow = addBotResponse();
+      const answerBox = botRow.querySelector(".bot-answer");
+      const trackList = botRow.querySelector(".track-list");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let answer = "";
+      let tracks = [];
+      let streamError = null;
+
+      function consume(block) {
+        let eventName = "message";
+        let dataText = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          if (line.startsWith("data:")) dataText += line.slice(5).trim();
+        }
+        if (!dataText) return;
+        const data = JSON.parse(dataText);
+        if (eventName === "text") { answer += data.delta || ""; answerBox.textContent = answer; scrollToBottom(); }
+        if (eventName === "tracks") { tracks = data.tracks || []; addTrackCards(trackList, tracks); }
+        if (eventName === "error") streamError = data.detail || "응답 스트리밍에 실패했습니다.";
+      }
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replaceAll("\r\n", "\n");
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop();
+          blocks.filter(Boolean).forEach(consume);
+          if (done) break;
+        }
+        if (buffer.trim()) consume(buffer);
+      } catch (error) {
+        streamError = String(error);
+      }
+
+      const latency = Math.round(performance.now() - started);
+      if (streamError) { setConnection("err", "스트림 실패"); setStatus("err", "ERR", "Stream", latency); setResBox({ error: streamError, answer, tracks }, true); }
+      else { setConnection("ok", "연결됨"); setStatus("ok", response.status, "OK", latency); setResBox({ message: answer, tracks }, false); }
+      pushLog(response.status);
+    }
+
+    let playingAudio = null;
+    let playingButton = null;
+    scroll.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-preview]");
+      if (!button) return;
+      if (playingAudio) { playingAudio.pause(); playingAudio = null; if (playingButton) { playingButton.textContent = "▶ 미리듣기 · iTunes 제공"; playingButton.classList.remove("playing"); } }
+      if (button === playingButton) { playingButton = null; return; }
+      const audio = new Audio(button.dataset.preview);
+      playingAudio = audio; playingButton = button; button.textContent = "■ 미리듣기 중지"; button.classList.add("playing");
+      audio.addEventListener("ended", () => { button.textContent = "▶ 미리듣기 · iTunes 제공"; button.classList.remove("playing"); playingAudio = null; playingButton = null; });
+      audio.play().catch(() => { button.textContent = "재생 실패"; button.classList.remove("playing"); playingAudio = null; playingButton = null; });
+    });
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognizer = null;
+    function stopRecording(autoSend = true) { if (recognizer) { try { recognizer.stop(); } catch {} } state.recording = false; if (!autoSend) { renderChips(); refreshControls(); } }
+    function startRecording() { if (!SpeechRecognition) { state.source = "voice"; renderChips(); refreshControls(); $("input").placeholder = "음성 인식 미지원 브라우저입니다. 텍스트로 입력해 주세요."; $("input").focus(); return; } recognizer = new SpeechRecognition(); recognizer.lang = "ko-KR"; recognizer.interimResults = true; state.recording = true; state.source = "voice"; renderChips(); refreshControls(); recognizer.onresult = (event) => { let text = ""; for (const result of event.results) text += result[0].transcript; $("input").value = text; }; recognizer.onerror = () => stopRecording(false); recognizer.onend = () => { const hasText = $("input").value.trim().length > 0; state.recording = false; renderChips(); refreshControls(); if (hasText) send(); }; recognizer.start(); }
+    $("sendBtn").addEventListener("click", () => { if (!state.recording) send(); });
+    $("input").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); if (!state.recording) send(); } });
+    $("voiceBtn").addEventListener("click", () => { if (state.recording) { stopRecording(true); return; } if (state.source === "voice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; renderChips(); refreshControls(); return; } startRecording(); });
+    $("photoBtn").addEventListener("click", () => { state.photoAttached = !state.photoAttached; renderChips(); refreshControls(); });
+    $("chips").addEventListener("click", (event) => { const action = event.target.closest("[data-act]")?.dataset.act; if (action === "cancelVoice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; } if (action === "removePhoto") state.photoAttached = false; if (action === "stopRec") stopRecording(false); renderChips(); refreshControls(); });
+    $("schemaHead").addEventListener("click", () => { state.schemaOpen = !state.schemaOpen; $("schemaBody").style.display = state.schemaOpen ? "" : "none"; $("schemaChev").className = "chev" + (state.schemaOpen ? " open" : ""); });
+    function resetAll() { scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.source = "text"; state.photoAttached = false; state.recording = false; state.threadId = crypto.randomUUID(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
+    $("resetBtn").addEventListener("click", resetAll);
+    resetAll();
+  </script>
+</body>
+</html>
