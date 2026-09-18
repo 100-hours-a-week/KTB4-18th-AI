@@ -37,9 +37,11 @@ def chat(body: ChatRequest) -> StreamingResponse:
     """추천 문장과 완성된 곡 목록을 Spring Backend에 SSE로 반환한다."""
 
     # TODO: request_id 중복 처리와 thread_id 대화 맥락은 책임 범위 확정 후 연결한다.
-    client, search_context, tracks = prepare_recommendation(body.message)
+    # 되돌릴 때: client, search_context, tracks = prepare_recommendation(body.message)
+    client, tracks = prepare_recommendation(body.message)
     return StreamingResponse(
-        stream_answer(client, body.message, search_context, tracks, body.user_context),
+        # 되돌릴 때: stream_answer(client, body.message, search_context, tracks, body.user_context)
+        stream_answer(client, body.message, tracks, body.user_context),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

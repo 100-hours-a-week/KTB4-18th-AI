@@ -23,7 +23,7 @@ class Base(DeclarativeBase):
     """이 안에 들어오면 전부 DB로 만들어주겠다 + 이런 방식으로 쓰면 타입 힌트랑(아래의 Mapped) 자동 완성 잘 된다"""
     pass
 
-class Track(Base):
+class TrackRow(Base):
     """Table의 Column을 정의"""
     __tablename__ = "tracks"
 
@@ -94,5 +94,5 @@ def init_db(engine_=None):
     with eng.begin() as con:
         con.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
-    # NOTE: DB에 Track에 저장된(위에 Base로 정의해서 가능) 칼럼 없으면 다 채워넣는다
+    # NOTE: DB에 TrackRow에 저장된(위에 Base로 정의해서 가능) 칼럼 없으면 다 채워넣는다
     Base.metadata.create_all(eng)

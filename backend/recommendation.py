@@ -6,10 +6,11 @@ from collections.abc import Iterator
 from typing import Any
 
 from fastapi import HTTPException
-from openai import OpenAI
+from google import genai  # 되돌릴 때: from openai import OpenAI
+from google.genai import types  # 되돌릴 때: 이 줄 삭제 (OpenAI는 별도 types import 불필요)
 
-from backend.music_search import search_tracks
 from backend.schemas import Track, UserContext
+from batch.embedder import embedder
 
 NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 조금 더 구체적인 질문과 함께 다시 요청해 주세요."
 
@@ -27,21 +28,162 @@ def _model_unavailable() -> HTTPException:
     )
 
 
-def prepare_recommendation(message: str) -> tuple[OpenAI, str, list[Track]]:
-    """모델 클라이언트와 현재 검색 구현의 추천곡을 준비한다."""
+def _catalog_unavailable() -> HTTPException:
+    """V1 음악 카탈로그 장애 응답을 반환한다."""
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "SERVICE_UNAVAILABLE",
+            "message": "일시적으로 음악 정보를 조회할 수 없습니다.",
+            "details": {"reason": "MUSIC_CATALOG_UNAVAILABLE"},
+        },
+    )
+
+
+def sound_description_instructions() -> str:
+    """CLAP 텍스트 인코더 입력용 영어 소리 서술 생성 지시를 반환한다.
+
+    CLAP 텍스트 인코더는 영어 전용이며 장면 묘사가 아닌 오디오 캡션(악기·템포·
+    질감 묘사)에 정렬되어 있다. 장면 서술이나 한국어를 그대로 넣으면 임의
+    입력과 구별되지 않을 정도로 유사도가 낮아진다(실측 0.52 vs 0.28).
+    """
+
+    return (
+        "You convert a listener's request into a description of how the music "
+        "should SOUND, for an audio search engine.\n\n"
+        "Rules:\n"
+        "- Output English only, even if the input is Korean.\n"
+        "- Describe instrumentation, tempo, texture, energy, and mood.\n"
+        "- Do NOT describe the scene, place, weather, or activity. Convert "
+        "those into sound qualities instead.\n"
+        "- Keep it under 15 words. Listing too many attributes dilutes each "
+        "one.\n"
+        "- If a region or culture is implied, you may name characteristic "
+        "instruments.\n"
+        "- Output the description only, with no quotes or preamble."
+    )
+
+
+def to_sound_description(client: genai.Client, message: str) -> str:  # 되돌릴 때: client: OpenAI
+    """사용자 요청을 CLAP 텍스트 인코더용 영어 소리 서술로 변환한다.
+
+    이 서술이 곧 검색 질의가 되는 필수 단계이므로, 이전처럼 원문으로
+    조용히 폴백하지 않고 실패 시 예외를 올린다.
+    """
+
+    try:
+        response = client.models.generate_content(  # 되돌릴 때: client.responses.create(
+            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),  # 되돌릴 때: os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+            contents=message,  # 되돌릴 때: input=message
+            config=types.GenerateContentConfig(  # 되돌릴 때: 이 config= 인자 삭제하고
+                system_instruction=sound_description_instructions(),  # 위 instructions=sound_description_instructions() 한 줄로 대체
+                thinking_config=types.ThinkingConfig(thinking_budget=0),  # 단순 변환 작업이라 thinking 끔 (토큰 대부분이 thinking에 소모됨)
+            ),
+        )
+    except Exception as error:
+        raise _model_unavailable() from error
+
+    description = (response.text or "").strip()  # 되돌릴 때: response.output_text
+    if not description:
+        raise _model_unavailable()
+    return description
+
+
+def reason_instructions() -> str:
+    """곡별 추천 이유 생성을 위한 지시를 반환한다."""
+
+    return (
+        "You explain why each song fits the listener's request.\n\n"
+        "Rules:\n"
+        "- Write in Korean, one sentence per song, under 40 characters.\n"
+        "- Base the explanation ONLY on the mood tags given. Do not invent "
+        "facts about lyrics, artists, or chart performance.\n"
+        "- Never mention songs outside the provided list.\n"
+        '- Return JSON only: {"<track_id>": "<설명>", ...}'
+    )
+
+
+def assign_reasons(
+    client: genai.Client,  # 되돌릴 때: client: OpenAI
+    message: str,
+    tracks: list[Track],
+    mood_tags_by_id: dict[str, dict],
+) -> None:
+    """TrackRow.mood_tags를 근거로 검증된 추천곡에 곡별 추천 이유를 채운다.
+
+    실패하면 db.search.search()가 채운 공통 문구를 그대로 둔다 — 추천 자체는
+    이어가되 이유만 덜 구체적인 상태로 응답한다.
+    """
+
+    if not tracks:
+        return
+
+    payload = {
+        "request": message,
+        "songs": [
+            {
+                "track_id": t.track_id,
+                "title": t.title,
+                "artist": t.artist,
+                "mood_tags": list(mood_tags_by_id.get(t.track_id, {}))[:5],
+            }
+            for t in tracks
+        ],
+    }
+    try:
+        response = client.models.generate_content(  # 되돌릴 때: client.responses.create(
+            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),  # 되돌릴 때: os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+            contents=json.dumps(payload, ensure_ascii=False),  # 되돌릴 때: input=json.dumps(payload, ensure_ascii=False)
+            config=types.GenerateContentConfig(  # 되돌릴 때: 이 config= 인자 삭제하고
+                system_instruction=reason_instructions(),  # 위 instructions=reason_instructions() 한 줄로 대체
+                thinking_config=types.ThinkingConfig(thinking_budget=0),  # 단순 JSON 매핑 작업이라 thinking 끔
+                response_mime_type="application/json",  # Gemini가 ```json 코드펜스로 감싸서 json.loads가 깨지는 걸 방지
+            ),
+        )
+        data = json.loads(response.text or "{}")  # 되돌릴 때: response.output_text
+    except Exception:
+        return
+
+    for t in tracks:
+        reason = data.get(t.track_id)
+        if isinstance(reason, str) and reason.strip():
+            t.reason = reason.strip()
+
+
+def prepare_recommendation(message: str) -> tuple[genai.Client, list[Track]]:  # 되돌릴 때: tuple[OpenAI, list[Track]]
+    """모델 클라이언트와 pgvector 검색 결과의 추천곡을 준비한다."""
+
+    api_key = os.getenv("GEMINI_API_KEY")  # 되돌릴 때: os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise _model_unavailable()
 
-    client = OpenAI(api_key=api_key)
-    search_context, tracks = search_tracks(client, message)
-    return client, search_context, tracks
+    client = genai.Client(api_key=api_key)  # 되돌릴 때: OpenAI(api_key=api_key)
+    sound_description = to_sound_description(client, message)
+
+    try:
+        qvec = embedder.embed_text(sound_description)
+    except Exception as error:
+        raise _model_unavailable() from error
+
+    try:
+        # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
+        # DATABASE_URL이 아직 없을 수 있어, 요청 처리 시점까지 import를 늦춘다.
+        from db.models import SessionLocal
+        from db.search import search as vector_search
+
+        with SessionLocal() as session:
+            tracks, mood_tags_by_id = vector_search(session, qvec, sound_description)
+    except Exception as error:
+        raise _catalog_unavailable() from error
+
+    assign_reasons(client, message, tracks, mood_tags_by_id)
+
+    return client, tracks
 
 
 def answer_input(
     message: str,
-    search_context: str,
     tracks: list[Track],
     user_context: UserContext | None,
 ) -> str:
@@ -51,7 +193,6 @@ def answer_input(
     return (
         f"사용자 요청: {message}\n"
         f"사용자 컨텍스트: {json.dumps(context, ensure_ascii=False)}\n"
-        f"음악 검색 컨텍스트: {search_context}\n"
         f"검증된 추천곡: {json.dumps([track.model_dump() for track in tracks], ensure_ascii=False)}"
     )
 
@@ -74,9 +215,8 @@ def sse(event: str, data: Any) -> str:
 
 
 def stream_answer(
-    client: OpenAI,
+    client: genai.Client,  # 되돌릴 때: client: OpenAI
     message: str,
-    search_context: str,
     tracks: list[Track],
     user_context: UserContext | None,
 ) -> Iterator[str]:
@@ -89,15 +229,17 @@ def stream_answer(
         return
 
     try:
-        stream = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
-            instructions=answer_instructions(),
-            input=answer_input(message, search_context, tracks, user_context),
-            stream=True,
+        stream = client.models.generate_content_stream(  # 되돌릴 때: client.responses.create(
+            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),  # 되돌릴 때: os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+            contents=answer_input(message, tracks, user_context),  # 되돌릴 때: input=answer_input(message, tracks, user_context)
+            config=types.GenerateContentConfig(  # 되돌릴 때: 이 config= 인자 삭제하고
+                system_instruction=answer_instructions(),  # 위 instructions=answer_instructions() 로 대체 + 마지막에 stream=True 추가
+                thinking_config=types.ThinkingConfig(thinking_budget=0),  # 1~3문장짜리 안내 멘트라 thinking 끔
+            ),
         )
-        for event in stream:
-            if event.type == "response.output_text.delta":
-                yield sse("text", {"delta": event.delta})
+        for chunk in stream:  # 되돌릴 때: for event in stream:
+            if chunk.text:  # 되돌릴 때: if event.type == "response.output_text.delta":
+                yield sse("text", {"delta": chunk.text})  # 되돌릴 때: {"delta": event.delta}
         yield sse("tracks", {"tracks": [track.model_dump() for track in tracks]})
         yield sse("done", {})
     except Exception:

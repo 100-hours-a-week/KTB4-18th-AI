@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from db.models import (  # noqa: E402
-    EMB_DIM, MODEL_VERSION, Base, CorpusStat, SessionLocal, Track,
+    EMB_DIM, MODEL_VERSION, Base, CorpusStat, SessionLocal, TrackRow,
     engine, init_db, l2norm,
 )
 
@@ -84,13 +84,13 @@ def main(recreate: bool = False, batch: int = 500):
     } for m, v, t in zip(meta, centered, tags)]
 
     with SessionLocal() as s:
-        existing = {r[0] for r in s.execute(select(Track.track_id))}
+        existing = {r[0] for r in s.execute(select(TrackRow.track_id))}
         new = [r for r in rows if r["track_id"] not in existing]
         print(f"기존 {len(existing)}곡 / 신규 {len(new)}곡")
 
         # NOTE: 배치 별로 나눠서 DB에 넣고 커밋한다
         for i in range(0, len(new), batch):
-            s.bulk_insert_mappings(Track, new[i:i + batch])
+            s.bulk_insert_mappings(TrackRow, new[i:i + batch])
             s.commit()
             print(f"  {min(i + batch, len(new))}/{len(new)}", end="\r")
         print()
@@ -105,9 +105,9 @@ def main(recreate: bool = False, batch: int = 500):
             stat.updated_at = now
         s.commit()
 
-        total = s.scalar(select(func.count()).select_from(Track))
-        with_emb = s.scalar(select(func.count()).select_from(Track)
-                            .where(Track.emb_clap.isnot(None)))
+        total = s.scalar(select(func.count()).select_from(TrackRow))
+        with_emb = s.scalar(select(func.count()).select_from(TrackRow)
+                            .where(TrackRow.emb_clap.isnot(None)))
         print(f"\n적재 완료: 총 {total}곡, 임베딩 보유 {with_emb}곡")
 
 
