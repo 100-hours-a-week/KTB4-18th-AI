@@ -131,7 +131,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">FastAPI 로컬 테스트 · 텍스트 API 수동 테스트</div></div></div>
+      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">DB 검색 연결 준비 중 · 텍스트 API 요청·오류 테스트</div></div></div>
       <div class="topright"><span class="pill env">로컬 개발</span><span class="pill"><span class="dot" id="connDot"></span><span class="mono" id="connText">대기 중</span></span></div>
     </header>
     <div class="body">
@@ -143,19 +143,20 @@
           <div class="inputrow">
             <button class="iconbtn ghost" id="photoBtn" type="button" title="풍경 사진 첨부 (멀티모달 예정)">▣</button>
             <input class="textfield" id="input" type="text" maxlength="200" placeholder="메시지를 입력하세요…" autocomplete="off">
-            <button class="iconbtn" id="voiceBtn" type="button" title="음성(STT) 입력">≋</button>
+            <button class="iconbtn ghost" id="voiceBtn" type="button" title="마이크 녹음 시작" aria-label="마이크 녹음 시작" aria-pressed="false">≋</button>
             <button class="iconbtn" id="sendBtn" type="button" title="전송 (Enter)">↑</button>
           </div>
-          <div class="hint"><b>Enter</b>로 전송 · 음성 인식 결과는 텍스트로 전송 · 사진 입력은 멀티모달 API 연동 예정</div>
+          <div class="hint"><b>Enter</b>로 요청·오류 응답 테스트 · 음악 DB 검색·음성 전사는 연결 준비 중</div>
         </div>
       </main>
       <aside class="inspane">
-        <div class="insphead"><div class="t">인스펙터</div><div class="s">마지막 <b class="mono">POST /v1/chat/messages</b> 요청·응답</div></div>
+        <div class="insphead"><div class="t">인스펙터</div><div class="s">마지막 <b class="mono" id="lastEndpoint">POST /v1/chat/messages</b> 요청·응답</div></div>
         <div class="inspbody">
-          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> /v1/chat/messages</span></div><div class="kv"><span class="k">응답 방식</span><span class="v">text/event-stream</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
+          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono" id="endpointName">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono" id="endpointValue">POST /v1/chat/messages</span></div><div class="kv"><span class="k">응답 방식</span><span class="v" id="responseType">현재 503 JSON · 정상 시 SSE</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
+          <div class="blocktitle"><button class="ghostbtn" id="healthBtn" type="button">서버 확인</button><button class="ghostbtn" id="invalidBtn" type="button">입력 오류 422</button><button class="ghostbtn" id="missingAudioBtn" type="button">파일 누락 422</button></div>
           <div class="blocktitle"><span class="bt">요청 본문 (Request)</span></div><pre class="jsonpre" id="reqBox"><span class="placeholder">아직 보낸 요청이 없습니다.</span></pre>
           <div class="blocktitle"><span class="bt">응답 본문 (Response)</span><span class="mono" id="respMini" style="font-size:11px;color:#9a9ca3"></span></div><pre class="jsonpre" id="resBox"><span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span></pre>
-          <section class="sect"><button class="secthead" id="schemaHead" type="button"><span class="st">요청 · 응답 스키마</span><span class="chev open" id="schemaChev">⌄</span></button><div class="schtable" id="schemaBody"><div class="schcap">ChatRequest — 요청</div><div class="schrow"><span class="f mono">thread_id</span><span class="ty mono">UUID</span><span class="rule">채팅 세션 동안 유지</span></div><div class="schrow"><span class="f mono">request_id</span><span class="ty mono">UUID</span><span class="rule">요청마다 새로 발급</span></div><div class="schrow"><span class="f mono">message</span><span class="ty mono">string</span><span class="rule">필수 · 공백 불가 · ≤ 200자</span></div><div class="schcap" style="margin-top:6px">SSE — 응답</div><div class="schrow"><span class="f mono">text</span><span class="ty mono">delta</span><span class="rule">OpenAI 한국어 텍스트 조각</span></div><div class="schrow"><span class="f mono">tracks</span><span class="ty mono">array</span><span class="rule">iTunes 미리듣기 곡 목록</span></div></div></section>
+          <section class="sect"><button class="secthead" id="schemaHead" type="button"><span class="st">요청 · 응답 스키마</span><span class="chev open" id="schemaChev">⌄</span></button><div class="schtable" id="schemaBody"><div class="schcap">ChatRequest — 요청</div><div class="schrow"><span class="f mono">thread_id</span><span class="ty mono">UUID</span><span class="rule">채팅 세션 동안 유지</span></div><div class="schrow"><span class="f mono">request_id</span><span class="ty mono">UUID</span><span class="rule">요청마다 새로 발급</span></div><div class="schrow"><span class="f mono">message</span><span class="ty mono">string</span><span class="rule">필수 · 공백 불가 · ≤ 200자</span></div><div class="schcap" style="margin-top:6px">현재 응답</div><div class="schrow"><span class="f mono">503</span><span class="ty mono">JSON</span><span class="rule">MUSIC_CATALOG_UNAVAILABLE · DB 검색 연결 전</span></div><div class="schcap" style="margin-top:6px">검색 연결 후 SSE 응답</div><div class="schrow"><span class="f mono">text</span><span class="ty mono">delta</span><span class="rule">추천 안내 문장 조각</span></div><div class="schrow"><span class="f mono">tracks</span><span class="ty mono">array</span><span class="rule">DB에서 검색한 곡 목록</span></div></div></section>
           <section class="sect"><div class="secthead static"><span class="st">호출 로그</span></div><div class="schtable" id="logBody"><div class="empty">아직 호출 기록이 없습니다.</div></div></section>
         </div>
       </aside>
@@ -164,7 +165,7 @@
   <script>
     "use strict";
     const CHAT_URL = "/v1/chat/messages";
-    const state = { source: "text", photoAttached: false, recording: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
+    const state = { busy: false, method: "POST", endpoint: CHAT_URL, photoAttached: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
     const $ = (id) => document.getElementById(id);
     const scroll = $("msgScroll");
 
@@ -173,42 +174,81 @@
     function jsonHtml(value) { return esc(JSON.stringify(value, null, 2)).replace(/&quot;([^&]+?)&quot;(\s*:)/g, '<span class="k">&quot;$1&quot;</span>$2').replace(/:\s(&quot;.*?&quot;)/g, ': <span class="s">$1</span>').replace(/:\s(-?\d+(?:\.\d+)?)/g, ': <span class="n">$1</span>'); }
     function scrollToBottom() { scroll.scrollTop = scroll.scrollHeight; }
     function addDivider(text) { const el = document.createElement("div"); el.className = "divider"; el.innerHTML = `<span>${esc(text)}</span>`; scroll.append(el); }
-    function addGreeting() { const el = document.createElement("div"); el.className = "msgrow left"; el.innerHTML = `<div class="bubble bot greeting"><span class="greeting-mark" aria-hidden="true">♪</span><div class="greeting-copy">지금 어떤 순간에 머물고 있나요?\n\n날씨나 장소, 느껴지는 기분을 편하게 알려주세요.\n글로 적어 주시거나 음성으로 말해도 좋아요.\n지금 딱 어울리는 음악을 골라드릴게요.</div><div class="greeting-save"><span aria-hidden="true">🔖</span><span>추천받은 곡은 챗봇 추천에 모아둘게요.</span></div></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(el); }
-    function addUserBubble(text, source) { const row = document.createElement("div"); row.className = "msgrow right"; const label = source === "voice" ? "음성 인식" : "텍스트"; row.innerHTML = `<div class="bubble user pending">${esc(text)}</div><div class="metaline right"><span class="time">${nowLabel()}</span><span class="srctag ${source}">${label}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
+    function addGreeting() { const el = document.createElement("div"); el.className = "msgrow left"; el.innerHTML = `<div class="bubble bot greeting"><span class="greeting-mark" aria-hidden="true">♪</span><div class="greeting-copy">지금 어떤 순간에 머물고 있나요?\n\n날씨나 장소, 느껴지는 기분을 편하게 알려주세요.\n현재는 텍스트 요청·오류 응답을 테스트할 수 있어요.\n마이크를 눌러 녹음하고 다시 누르면 전사를 요청해요. 전사 기능은 준비 중이에요.</div><div class="greeting-save"><span aria-hidden="true">🔖</span><span>음악 추천·저장 기능은 아직 연결되지 않았어요.</span></div></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(el); }
+    function addUserBubble(text) { const row = document.createElement("div"); row.className = "msgrow right"; row.innerHTML = `<div class="bubble user pending">${esc(text)}</div><div class="metaline right"><span class="time">${nowLabel()}</span><span class="srctag text">텍스트</span></div>`; scroll.append(row); scrollToBottom(); return row; }
     function addBotResponse() { const row = document.createElement("div"); row.className = "msgrow left"; row.innerHTML = `<div class="bubble bot bot-answer"></div><div class="track-list"></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
-    function addTrackCards(container, tracks) { container.innerHTML = tracks.map((track) => `<article class="track-card">${track.artwork_url ? `<img class="track-art" src="${esc(track.artwork_url)}" alt="${esc(track.title)} 앨범 표지">` : '<div class="track-art empty">♪</div>'}<div class="track-copy"><div class="track-title">${esc(track.title)}</div><div class="track-artist">${esc(track.artist)}</div><div>${esc(track.reason)}</div><div class="track-actions">${track.preview_url ? `<button class="preview-btn" type="button" data-preview="${esc(track.preview_url)}">▶ 미리듣기 · iTunes 제공</button>` : ""}<a class="source-link" href="${esc(track.store_url)}" target="_blank" rel="noopener">iTunes에서 보기</a></div></div></article>`).join(""); scrollToBottom(); }
+    function addTrackCards(container, tracks) { container.innerHTML = tracks.map((track) => `<article class="track-card">${track.artwork_url ? `<img class="track-art" src="${esc(track.artwork_url)}" alt="${esc(track.title)} 앨범 표지">` : '<div class="track-art empty">♪</div>'}<div class="track-copy"><div class="track-title">${esc(track.title)}</div><div class="track-artist">${esc(track.artist)}</div><div>${esc(track.reason)}</div><div class="track-actions">${track.preview_url ? `<button class="preview-btn" type="button" data-preview="${esc(track.preview_url)}">▶ 미리듣기 · iTunes 제공</button>` : ""}${track.store_url ? `<a class="source-link" href="${esc(track.store_url)}" target="_blank" rel="noopener">iTunes에서 보기</a>` : ""}</div></div></article>`).join(""); scrollToBottom(); }
     function setConnection(kind, label) { const cls = kind === "ok" ? "dot ok" : kind === "err" ? "dot err" : "dot"; $("connDot").className = cls; $("connDot2").className = cls; $("connText").textContent = label; }
     function setStatus(kind, code, text, latency) { const badge = $("statusBadge"); if (kind === "idle") { badge.className = "statusbadge"; badge.textContent = "대기 중"; $("latText").textContent = "—"; $("respMini").textContent = ""; return; } badge.className = kind === "ok" ? "statusbadge ok" : "statusbadge err"; badge.textContent = `${code} ${text}`; $("latText").textContent = latency == null ? "—" : `${latency}ms`; $("respMini").textContent = code; }
     function setReqBox(value) { $("reqBox").innerHTML = jsonHtml(value); }
     function setResBox(value, error) { const box = $("resBox"); box.className = error ? "jsonpre err" : "jsonpre"; box.innerHTML = jsonHtml(value); }
-    function pushLog(status) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">/v1/chat/messages</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
-    function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>듣고 있어요… 말이 끝나면 자동 전송돼요<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">음성 인식 결과도 텍스트로 전송됩니다<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진 입력은 준비 중입니다 <span class="tag-plan">멀티모달 예정</span><span class="x" data-act="removePhoto">×</span></span>'; $("chips").innerHTML = html; }
-    function refreshControls() { $("voiceBtn").className = "iconbtn" + (state.recording ? " rec" : state.source === "voice" ? " on" : ""); $("photoBtn").className = "iconbtn ghost" + (state.photoAttached ? " on" : ""); }
+    function pushLog(status) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, method: state.method, endpoint: state.endpoint, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">${esc(item.method)}</span><span class="lp mono">${esc(item.endpoint)}</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
+    function renderChips() { $("chips").innerHTML = state.photoAttached ? '<span class="ctxchip photo">사진 입력은 준비 중입니다 <span class="tag-plan">멀티모달 예정</span><span class="x" data-act="removePhoto">×</span></span>' : ""; }
+    function refreshControls() { $("photoBtn").className = "iconbtn ghost" + (state.photoAttached ? " on" : ""); }
 
+    function selectEndpoint(method, endpoint) {
+      state.method = method; state.endpoint = endpoint;
+      $("lastEndpoint").textContent = method + " " + endpoint;
+      $("endpointName").textContent = endpoint;
+      $("endpointValue").textContent = method + " " + endpoint;
+      $("responseType").textContent = endpoint === CHAT_URL ? "오류 JSON · 정상 SSE" : "JSON";
+    }
+    function setBusy(busy) {
+      state.busy = busy;
+      for (const id of ["sendBtn", "voiceBtn", "healthBtn", "invalidBtn", "missingAudioBtn", "resetBtn"]) $(id).disabled = busy;
+    }
+    async function probe(endpoint, options, requestInfo) {
+      if (state.busy) return;
+      setBusy(true); selectEndpoint(options.method || "GET", endpoint);
+      setReqBox(requestInfo); setConnection("", "요청 중");
+      const started = performance.now();
+      try {
+        const response = await fetch(endpoint, options);
+        const data = await response.json();
+        const label = response.status === 501 ? "STT 미구현" : response.status === 422 ? "입력 검증 동작" : response.ok ? "서버 응답 정상 · 기능 준비와 별개" : "요청 실패";
+        setConnection(response.ok ? "ok" : "err", label);
+        setStatus(response.ok ? "ok" : "err", response.status, label, Math.round(performance.now() - started));
+        setResBox(data, !response.ok); pushLog(response.status);
+        return response.ok ? data : null;
+      } catch (error) {
+        setConnection("err", "연결 또는 응답 실패"); setStatus("err", "ERR", "No response", null);
+        setResBox({ error: String(error) }, true); pushLog("ERR");
+      } finally { setBusy(false); }
+    }
     async function send() {
+      if (state.busy || !$("input").value.trim()) return;
+      setBusy(true); selectEndpoint("POST", CHAT_URL);
+      try { await sendChat(); }
+      catch (error) {
+        setConnection("err", "응답 처리 실패"); setStatus("err", "ERR", "Response", null);
+        setResBox({ error: String(error) }, true); pushLog("ERR");
+      } finally { setBusy(false); }
+    }
+    async function sendChat() {
       const input = $("input");
       const raw = input.value.trim();
       if (!raw) return;
-      const userRow = addUserBubble(raw, state.source);
+      const userRow = addUserBubble(raw);
       const body = { thread_id: state.threadId, request_id: crypto.randomUUID(), message: raw };
       setReqBox(body);
       input.value = "";
-      setConnection("", "음악 검색 중");
+      setConnection("", "요청 중");
       const started = performance.now();
       let response;
       try {
         response = await fetch(CHAT_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       } catch (error) {
-        setConnection("err", "연결 실패"); setStatus("err", "ERR", "No response", null); setResBox({ error: "서버에 연결하지 못했습니다. uvicorn 실행 상태를 확인하세요.", detail: String(error) }, true); userRow.querySelector(".bubble").classList.remove("pending"); const note = document.createElement("div"); note.className = "errnote"; note.textContent = "전송 실패 — 서버 미응답"; userRow.append(note); pushLog("ERR"); return;
+        setConnection("err", "연결 실패"); setStatus("err", "ERR", "No response", null); setResBox({ error: "서버에 연결하지 못했습니다. uvicorn 실행 상태를 확인하세요.", detail: String(error) }, true); userRow.querySelector(".bubble").classList.remove("pending"); const note = document.createElement("div"); note.className = "errnote"; note.textContent = "전송 실패 — 서버 미응답"; userRow.append(note); input.value = raw; pushLog("ERR"); return;
       }
       userRow.querySelector(".bubble").classList.remove("pending");
       if (!response.ok) {
         let data;
         try { data = await response.json(); } catch { data = { detail: "응답이 JSON 형식이 아닙니다." }; }
         const latency = Math.round(performance.now() - started);
-        setConnection("err", "요청 실패"); setStatus("err", response.status, response.statusText || "Error", latency); setResBox(data, true); const note = document.createElement("div"); note.className = "errnote"; note.textContent = `요청 거부됨 (${response.status})`; userRow.append(note); pushLog(response.status); return;
+        setConnection("err", "요청 실패"); setStatus("err", response.status, response.statusText || "Error", latency); setResBox(data, true); const note = document.createElement("div"); note.className = "errnote"; note.textContent = data.details?.reason === "MUSIC_CATALOG_UNAVAILABLE" ? "음악 DB 검색 연결 준비 중 (503)" : data.message || `요청 거부됨 (${response.status})`; userRow.append(note); input.value = raw; pushLog(response.status); return;
       }
 
+      if (!response.headers.get("content-type")?.includes("text/event-stream") || !response.body) throw new Error("SSE 응답이 아닙니다.");
       const botRow = addBotResponse();
       const answerBox = botRow.querySelector(".bot-answer");
       const trackList = botRow.querySelector(".track-list");
@@ -218,6 +258,7 @@
       let answer = "";
       let tracks = [];
       let streamError = null;
+      let completed = false;
 
       function consume(block) {
         let eventName = "message";
@@ -230,6 +271,7 @@
         const data = JSON.parse(dataText);
         if (eventName === "text") { answer += data.delta || ""; answerBox.textContent = answer; scrollToBottom(); }
         if (eventName === "tracks") { tracks = data.tracks || []; addTrackCards(trackList, tracks); }
+        if (eventName === "done") completed = true;
         if (eventName === "error") streamError = data.detail || "응답 스트리밍에 실패했습니다.";
       }
 
@@ -247,10 +289,11 @@
         streamError = String(error);
       }
 
+      if (!completed && !streamError) streamError = "done 이벤트 없이 종료된 미완료 응답입니다.";
       const latency = Math.round(performance.now() - started);
       if (streamError) { setConnection("err", "스트림 실패"); setStatus("err", "ERR", "Stream", latency); setResBox({ error: streamError, answer, tracks }, true); }
       else { setConnection("ok", "연결됨"); setStatus("ok", response.status, "OK", latency); setResBox({ message: answer, tracks }, false); }
-      pushLog(response.status);
+      pushLog(streamError ? "STREAM_ERR" : response.status);
     }
 
     let playingAudio = null;
@@ -266,17 +309,117 @@
       audio.play().catch(() => { button.textContent = "재생 실패"; button.classList.remove("playing"); playingAudio = null; playingButton = null; });
     });
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognizer = null;
-    function stopRecording(autoSend = true) { if (recognizer) { try { recognizer.stop(); } catch {} } state.recording = false; if (!autoSend) { renderChips(); refreshControls(); } }
-    function startRecording() { if (!SpeechRecognition) { state.source = "voice"; renderChips(); refreshControls(); $("input").placeholder = "음성 인식 미지원 브라우저입니다. 텍스트로 입력해 주세요."; $("input").focus(); return; } recognizer = new SpeechRecognition(); recognizer.lang = "ko-KR"; recognizer.interimResults = true; state.recording = true; state.source = "voice"; renderChips(); refreshControls(); recognizer.onresult = (event) => { let text = ""; for (const result of event.results) text += result[0].transcript; $("input").value = text; }; recognizer.onerror = () => stopRecording(false); recognizer.onend = () => { const hasText = $("input").value.trim().length > 0; state.recording = false; renderChips(); refreshControls(); if (hasText) send(); }; recognizer.start(); }
-    $("sendBtn").addEventListener("click", () => { if (!state.recording) send(); });
-    $("input").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); if (!state.recording) send(); } });
-    $("voiceBtn").addEventListener("click", () => { if (state.recording) { stopRecording(true); return; } if (state.source === "voice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; renderChips(); refreshControls(); return; } startRecording(); });
+    $("healthBtn").addEventListener("click", () => probe("/health", {}, {}));
+    $("invalidBtn").addEventListener("click", () => {
+      const body = { thread_id: state.threadId, request_id: crypto.randomUUID(), message: "   " };
+      probe(CHAT_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, body);
+    });
+    $("missingAudioBtn").addEventListener("click", () => probe("/v1/transcriptions", { method: "POST", body: new FormData() }, { audio: "미지정 (파일 누락 테스트)" }));
+    let recorder = null;
+    let microphone = null;
+    let recordingTimer = null;
+    function releaseMicrophone() {
+      clearTimeout(recordingTimer);
+      microphone?.getTracks().forEach(track => track.stop());
+      microphone = null; recorder = null;
+      $("voiceBtn").textContent = "≋";
+      $("voiceBtn").title = "마이크 녹음 시작";
+      $("voiceBtn").setAttribute("aria-label", "마이크 녹음 시작");
+      $("voiceBtn").setAttribute("aria-pressed", "false");
+      $("input").disabled = false;
+      setBusy(false);
+    }
+    async function toggleRecording() {
+      if (recorder?.state === "recording") {
+        $("voiceBtn").disabled = true;
+        recorder.stop();
+        return;
+      }
+      if (state.busy) return;
+      if (!["http:", "https:"].includes(location.protocol)) {
+        setResBox({ error: "파일로 직접 열지 말고 서버의 /app/ 주소로 접속하세요. 기본 주소: http://localhost:8001/app/" }, true);
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        setResBox({ error: "이 브라우저에서는 녹음을 사용할 수 없습니다. HTTPS 또는 localhost에서 지원 브라우저로 접속하세요." }, true);
+        return;
+      }
+      setBusy(true); $("input").disabled = true;
+      setConnection("", "마이크 권한 확인 중");
+      try {
+        microphone = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"]
+          .find(type => MediaRecorder.isTypeSupported(type));
+        const activeRecorder = new MediaRecorder(microphone, mimeType ? { mimeType } : {});
+        recorder = activeRecorder;
+        const chunks = [];
+        let recordingFailed = false;
+        activeRecorder.addEventListener("dataavailable", event => {
+          if (event.data.size) chunks.push(event.data);
+        });
+        activeRecorder.addEventListener("error", () => {
+          recordingFailed = true;
+          if (activeRecorder.state !== "inactive") activeRecorder.stop();
+          releaseMicrophone();
+          setConnection("err", "녹음 실패");
+          setResBox({ error: "녹음하지 못했습니다. 마이크 상태를 확인하고 다시 시도하세요." }, true);
+        });
+        activeRecorder.addEventListener("stop", async () => {
+          const audio = new Blob(chunks, { type: activeRecorder.mimeType || mimeType || "" });
+          releaseMicrophone();
+          if (recordingFailed) return;
+          if (!audio.size) {
+            setConnection("err", "녹음 데이터 없음");
+            setResBox({ error: "녹음된 음성이 없습니다. 다시 녹음하세요." }, true);
+            return;
+          }
+          const extension = audio.type.includes("mp4") ? "m4a" : audio.type.includes("ogg") ? "ogg" : "webm";
+          const form = new FormData();
+          form.append("audio", audio, "recording." + extension);
+          $("input").disabled = true;
+          try {
+            const data = await probe("/v1/transcriptions", { method: "POST", body: form },
+              { audio: { source: "microphone", content_type: audio.type, bytes: audio.size } });
+            if (!data) return; // 501 등의 오류에서는 기존 입력을 유지한다.
+            if (typeof data.transcript !== "string" || !data.transcript.trim()) {
+              setConnection("err", "전사문 없음");
+              setResBox({ error: "응답에 유효한 transcript가 없습니다.", response: data }, true);
+              return;
+            }
+            $("input").value = data.transcript;
+            setConnection("ok", "전사 완료 · 입력 확인 후 전송");
+            if ([...data.transcript].length > 200) {
+              setConnection("err", "전사 완료 · 200자 이하로 수정 후 전송");
+            }
+          } finally { $("input").disabled = false; $("input").focus(); }
+        });
+        activeRecorder.start();
+        $("voiceBtn").disabled = false;
+        $("voiceBtn").textContent = "■";
+        $("voiceBtn").title = "녹음 종료 후 전사 요청";
+        $("voiceBtn").setAttribute("aria-label", "녹음 종료 후 전사 요청");
+        $("voiceBtn").setAttribute("aria-pressed", "true");
+        setConnection("", "녹음 중 · 다시 누르면 종료 (최대 60초)");
+        recordingTimer = setTimeout(() => {
+          if (activeRecorder.state === "recording") activeRecorder.stop();
+        }, 60000);
+      } catch (error) {
+        releaseMicrophone();
+        setConnection("err", "마이크 사용 실패");
+        setResBox({ error: error.name === "NotAllowedError" ? "마이크 권한이 거부되었습니다. 브라우저 권한 설정을 확인하세요." : "마이크를 사용할 수 없습니다.", detail: String(error) }, true);
+      }
+    }
+    window.addEventListener("pagehide", () => {
+      clearTimeout(recordingTimer);
+      microphone?.getTracks().forEach(track => track.stop());
+    });
+    $("voiceBtn").addEventListener("click", toggleRecording);
+    $("sendBtn").addEventListener("click", send);
+    $("input").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); send(); } });
     $("photoBtn").addEventListener("click", () => { state.photoAttached = !state.photoAttached; renderChips(); refreshControls(); });
-    $("chips").addEventListener("click", (event) => { const action = event.target.closest("[data-act]")?.dataset.act; if (action === "cancelVoice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; } if (action === "removePhoto") state.photoAttached = false; if (action === "stopRec") stopRecording(false); renderChips(); refreshControls(); });
+    $("chips").addEventListener("click", (event) => { if (event.target.closest("[data-act]")?.dataset.act === "removePhoto") state.photoAttached = false; renderChips(); refreshControls(); });
     $("schemaHead").addEventListener("click", () => { state.schemaOpen = !state.schemaOpen; $("schemaBody").style.display = state.schemaOpen ? "" : "none"; $("schemaChev").className = "chev" + (state.schemaOpen ? " open" : ""); });
-    function resetAll() { scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.source = "text"; state.photoAttached = false; state.recording = false; state.threadId = crypto.randomUUID(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
+    function resetAll() { if (playingAudio) playingAudio.pause(); playingAudio = null; playingButton = null; selectEndpoint("POST", CHAT_URL); setConnection("", "대기 중"); scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.photoAttached = false; state.threadId = crypto.randomUUID(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
     $("resetBtn").addEventListener("click", resetAll);
     resetAll();
   </script>
