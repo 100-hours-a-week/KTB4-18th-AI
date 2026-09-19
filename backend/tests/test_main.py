@@ -86,6 +86,27 @@ def test_empty_search_returns_empty_tracks_without_model_call(client) -> None:
     create.assert_not_called()
 
 
+@pytest.mark.parametrize("ending", ["response.failed", "response.incomplete", "error", None, "exception"])
+def test_failed_stream_never_reports_success(client, ending) -> None:
+    test_client, _, create = client
+
+    def events():
+        yield SimpleNamespace(type="response.output_text.delta", delta="생성 중")
+        if ending == "exception":
+            raise RuntimeError("stream interrupted")
+        if ending is not None:
+            yield SimpleNamespace(type=ending)
+
+    create.return_value = fake_stream(events())
+    response = test_client.post("/v1/chat/messages", json=request_body())
+    assert response.status_code == 200
+    assert "event: text" in response.text
+    assert response.text.count("event: error") == 1
+    assert "event: done" not in response.text
+    assert "event: tracks" not in response.text
+    create.return_value.__exit__.assert_called_once()
+
+
 @pytest.mark.parametrize("field,value", [
     ("message", None), ("message", "x" * 201), ("thread_id", "invalid-uuid"),
 ])

@@ -88,6 +88,8 @@ def stream_answer(
         yield sse("done", {})
         return
 
+    error_message = "챗봇 응답 스트리밍에 실패했습니다."
+
     try:
         stream = client.responses.create(
             model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
@@ -95,10 +97,30 @@ def stream_answer(
             input=answer_input(message, search_context, tracks, user_context),
             stream=True,
         )
-        for event in stream:
-            if event.type == "response.output_text.delta":
-                yield sse("text", {"delta": event.delta})
-        yield sse("tracks", {"tracks": [track.model_dump() for track in tracks]})
-        yield sse("done", {})
+
+        with stream:
+            for event in stream:
+                if event.type == "response.output_text.delta":
+                    yield sse("text", {"delta": event.delta})
+
+                elif event.type == "response.completed":
+                    yield sse(
+                        "tracks",
+                        {"tracks": [track.model_dump() for track in tracks]},
+                    )
+                    yield sse("done", {})
+                    return
+
+                elif event.type in (
+                    "response.failed",
+                    "response.incomplete",
+                    "error",
+                ):
+                    yield sse("error", {"detail": error_message})
+                    return
+
+        # 완료 이벤트 없이 연결이 끝나면 성공으로 처리하지 않는다.
+        yield sse("error", {"detail": error_message})
+
     except Exception:
-        yield sse("error", {"detail": "챗봇 응답 스트리밍에 실패했습니다."})
+        yield sse("error", {"detail": error_message})
