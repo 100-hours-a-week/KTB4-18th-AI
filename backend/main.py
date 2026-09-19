@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.recommendation import prepare_recommendation, stream_answer
-from backend.schemas import ChatRequest, HealthResponse
+from backend.schemas import ChatRequest, HealthResponse, ErrorResponse
+
 
 # ===== 애플리케이션 설정 =====
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +31,17 @@ def health() -> HealthResponse:
 @app.post(
     "/v1/chat/messages",
     response_class=StreamingResponse,
-    responses={200: {"content": {"text/event-stream": {}}}},
+    responses={
+        200: {"content": {"text/event-stream": {}}},
+        422: {
+            "model": ErrorResponse,
+            "description": "요청값 검증 실패",
+        },
+        503: {
+            "model": ErrorResponse,
+            "description": "모델 또는 음악 검색 서비스 사용 불가",
+        },
+    },
     tags=["chat"],
 )
 def chat(body: ChatRequest) -> StreamingResponse:
@@ -63,10 +74,10 @@ def transcriptions() -> None:
 async def validation_error_handler(
     _request: Request, _error: RequestValidationError
 ) -> JSONResponse:
-    """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환."""
+    """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환한다."""
 
     return JSONResponse(
-        status_code=400,
+        status_code=422,
         content={
             "code": "INVALID_REQUEST",
             "message": "요청값이 올바르지 않습니다.",

@@ -86,11 +86,43 @@ def test_empty_search_returns_empty_tracks_without_model_call(client) -> None:
     create.assert_not_called()
 
 
+@pytest.mark.parametrize("field,value", [
+    ("message", None), ("message", "x" * 201), ("thread_id", "invalid-uuid"),
+])
+def test_invalid_chat_fields_return_422(client, field, value) -> None:
+    test_client, search, create = client
+    body = request_body()
+    if value is None:
+        del body[field]
+    else:
+        body[field] = value
+    response = test_client.post("/v1/chat/messages", json=body)
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "INVALID_REQUEST", "message": "요청값이 올바르지 않습니다.", "details": None,
+    }
+    search.assert_not_called()
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("path,statuses", [
+    ("/v1/chat/messages", {"200", "422", "503"}),
+])
+def test_openapi_documents_actual_error_contract(path, statuses) -> None:
+    schema = TestClient(main.app).get("/openapi.json").json()
+    responses = schema["paths"][path]["post"]["responses"]
+    assert set(responses) == statuses
+    for status in statuses - {"200"}:
+        assert responses[status]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorResponse",
+        }
+
+
 def test_chat_rejects_blank_message(client) -> None:
     test_client, search, create = client
     response = test_client.post("/v1/chat/messages", json=request_body("   "))
 
-    assert response.status_code == 400
+    assert response.status_code == 422
     assert response.json()["code"] == "INVALID_REQUEST"
     search.assert_not_called()
     create.assert_not_called()
