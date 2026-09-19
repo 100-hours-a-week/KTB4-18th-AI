@@ -50,14 +50,10 @@ class Track(BaseModel):
     reason: str  # 현재 입력과 해당 곡이 어울리는 이유
 
 
-class Voice(BaseModel):
-    """Spring Backend가 전달한 음성 파일에 대한 Pydantic 모델."""
+class TranscriptionResponse(BaseModel):
+    """사용자가 입력창에서 확인·수정할 음성 전사 초안."""
 
-    # TODO: Spring Backend에서 음성 파일을 전달하는 정책이 변경되면 이 모델을 함께 갱신.
-    # + Pydantic 검증기 구현이 필요.
-    filename: str
-    content_type: str
-    data: bytes
+    transcript: str
 
 
 class ErrorResponse(BaseModel):

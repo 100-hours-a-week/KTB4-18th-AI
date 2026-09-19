@@ -105,8 +105,21 @@ def test_invalid_chat_fields_return_422(client, field, value) -> None:
     create.assert_not_called()
 
 
+def test_transcription_missing_file_and_unimplemented_response() -> None:
+    test_client = TestClient(main.app)
+    missing = test_client.post("/v1/transcriptions")
+    assert missing.status_code == 422
+    assert missing.json()["code"] == "INVALID_REQUEST"
+    uploaded = test_client.post(
+        "/v1/transcriptions", files={"audio": ("sample.wav", b"test", "audio/wav")},
+    )
+    assert uploaded.status_code == 501
+    assert uploaded.json()["code"] == "REQUEST_FAILED"
+
+
 @pytest.mark.parametrize("path,statuses", [
     ("/v1/chat/messages", {"200", "422", "503"}),
+    ("/v1/transcriptions", {"200", "422", "501"}),
 ])
 def test_openapi_documents_actual_error_contract(path, statuses) -> None:
     schema = TestClient(main.app).get("/openapi.json").json()
