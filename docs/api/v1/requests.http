@@ -1,0 +1,67 @@
+# IntelliJ HTTP Client / VS Code REST Client
+# 상대 파일 경로는 이 requests.http 파일 기준이다.
+@baseUrl = http://localhost:8001
+
+### 생존 확인 → 200 JSON
+GET {{baseUrl}}/health
+Accept: application/json
+
+### OpenAPI 스키마 → 200 JSON
+GET {{baseUrl}}/openapi.json
+
+### 추천 최소 요청 → 현재 503 JSON, 검색·모델 연결 후 200 SSE
+POST {{baseUrl}}/v1/chat/messages
+Content-Type: application/json
+Accept: text/event-stream
+
+< ./samples/chat-minimal.json
+
+### 선택 사용자 정보 포함 → 현재 503 JSON
+POST {{baseUrl}}/v1/chat/messages
+Content-Type: application/json
+Accept: text/event-stream
+
+< ./samples/chat-with-context.json
+
+### 공백 메시지 → 422 INVALID_REQUEST
+POST {{baseUrl}}/v1/chat/messages
+Content-Type: application/json
+
+< ./samples/chat-invalid-blank.json
+
+### 잘못된 UUID → 422 INVALID_REQUEST
+POST {{baseUrl}}/v1/chat/messages
+Content-Type: application/json
+
+< ./samples/chat-invalid-uuid.json
+
+### 메시지 201자 → 422 INVALID_REQUEST
+POST {{baseUrl}}/v1/chat/messages
+Content-Type: application/json
+
+< ./samples/chat-invalid-too-long.json
+
+### 필수 메시지 누락 → 422 INVALID_REQUEST
+POST {{baseUrl}}/v1/chat/messages
+Content-Type: application/json
+
+< ./samples/chat-invalid-missing-message.json
+
+### 오디오 업로드 → 현재 501 REQUEST_FAILED
+# 합성 무음은 업로드 확인용이며 전사 품질 평가용이 아니다.
+POST {{baseUrl}}/v1/transcriptions
+Accept: application/json
+Content-Type: multipart/form-data; boundary=V1SampleBoundary
+
+--V1SampleBoundary
+Content-Disposition: form-data; name="audio"; filename="upload-silence.wav"
+Content-Type: audio/wav
+
+< ./samples/upload-silence.wav
+--V1SampleBoundary--
+
+### 필수 audio 파일 누락 → 422 INVALID_REQUEST
+POST {{baseUrl}}/v1/transcriptions
+Content-Type: application/json
+
+{}
