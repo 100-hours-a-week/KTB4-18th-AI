@@ -1,16 +1,25 @@
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backend import main, music_search, recommendation
+from backend import main, recommendation
+from backend.schemas import Track
 
 THREAD_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def fake_stream(events):
+    stream = MagicMock()
+    stream.__enter__.return_value = stream
+    stream.__iter__.return_value = iter(events)
+    return stream
 
 
 def request_body(message: str = "퇴근길 음악") -> dict[str, str]:
@@ -21,155 +30,104 @@ def request_body(message: str = "퇴근길 음악") -> dict[str, str]:
     }
 
 
-class FakeResponses:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def create(self, **kwargs: object):
-        self.calls.append(kwargs)
-        if kwargs.get("stream"):
-            return iter(
-                [
-                    SimpleNamespace(type="response.output_text.delta", delta="퇴근길에 "),
-                    SimpleNamespace(type="response.output_text.delta", delta="어울리는 곡이에요."),
-                ]
-            )
-        if len(self.calls) == 1:
-            return SimpleNamespace(output_text="indie")
-        return SimpleNamespace(output_text="퇴근길에 어울리는 곡이에요.")
-
-
-class FakeOpenAI:
-    def __init__(self) -> None:
-        self.responses = FakeResponses()
-
-
-class FakeHttpResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self.payload = payload
-
-    def raise_for_status(self) -> None:
-        pass
-
-    def json(self) -> dict[str, object]:
-        return self.payload
-
-
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
-    fake_openai = FakeOpenAI()
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-test-key")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.6-luna")
-    monkeypatch.setattr(recommendation, "OpenAI", lambda api_key: fake_openai)
-
-    def fake_get(url: str, **kwargs: object) -> FakeHttpResponse:
-        if "audioscrobbler" in url:
-            return FakeHttpResponse(
-                {
-                    "tracks": {
-                        "track": [
-                            {
-                                "name": "TOMBOY",
-                                "artist": {"name": "HYUKOH"},
-                            }
-                        ]
-                    }
-                }
-            )
-        return FakeHttpResponse(
-            {
-                "results": [
-                    {
-                        "trackId": 123,
-                        "trackName": "TOMBOY",
-                        "artistName": "HYUKOH",
-                        "artworkUrl100": "https://example.com/art.jpg",
-                        "previewUrl": "https://example.com/preview.m4a",
-                        "trackViewUrl": "https://music.apple.com/track/123",
-                    }
-                ]
-            }
-        )
-
-    monkeypatch.setattr(music_search.httpx, "get", fake_get)
-    return TestClient(main.app), fake_openai
-
-
-def test_chat_streams_text_before_completed_track_cards(
-    client: tuple[TestClient, FakeOpenAI],
-) -> None:
-    test_client, fake_openai = client
-    response = test_client.post(
-        "/v1/chat/messages",
-        json=request_body(" 퇴근길 음악 "),
+def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Mock, Mock]:
+    """DB 연결 이후에도 유지할 API 계약을 가짜 검색 결과로 검증한다."""
+    track = Track(
+        track_id="123",
+        title="TOMBOY",
+        artist="HYUKOH",
+        artwork_url=None,
+        preview_url="https://example.com/preview.m4a",
+        store_url="https://music.apple.com/track/123",
+        reason="차분한 퇴근길 분위기와 어울리는 곡입니다.",
     )
+    search = Mock(return_value=("차분한 기타 중심 음악", [track]))
+    create = Mock(
+        return_value=fake_stream([
+            SimpleNamespace(type="response.output_text.delta", delta="퇴근길에 "),
+            SimpleNamespace(type="response.output_text.delta", delta="어울리는 곡이에요."),
+            SimpleNamespace(type="response.completed"),
+        ])
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(recommendation, "search_tracks", search)
+    monkeypatch.setattr(
+        recommendation, "OpenAI",
+        lambda api_key: SimpleNamespace(responses=SimpleNamespace(create=create)),
+    )
+    return TestClient(main.app), search, create
+
+
+def test_chat_streams_text_before_completed_track_cards(client) -> None:
+    test_client, search, create = client
+    response = test_client.post("/v1/chat/messages", json=request_body(" 퇴근길 음악 "))
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert 'event: text\ndata: {"delta": "퇴근길에 "}' in response.text
-    assert "event: tracks" in response.text
     assert '"preview_url": "https://example.com/preview.m4a"' in response.text
     assert response.text.index("event: text") < response.text.index("event: tracks")
-    assert "event: done" in response.text
-    assert len(fake_openai.responses.calls) == 2
+    assert response.text.index("event: tracks") < response.text.index("event: done")
+    search.assert_called_once_with("퇴근길 음악")
+    create.assert_called_once()
     assert test_client.post("/chat/stream", json=request_body()).status_code == 404
 
 
-def test_itunes_mismatch_returns_empty_tracks(
-    client: tuple[TestClient, FakeOpenAI], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    test_client, _ = client
-    original_get = music_search.httpx.get
-
-    def mismatched_get(url: str, **kwargs: object) -> FakeHttpResponse:
-        if "audioscrobbler" in url:
-            return original_get(url, **kwargs)
-        return FakeHttpResponse(
-            {
-                "results": [
-                    {
-                        "trackId": 999,
-                        "trackName": "TOMBOY",
-                        "artistName": "Another Artist",
-                        "previewUrl": "https://example.com/wrong.m4a",
-                        "trackViewUrl": "https://music.apple.com/track/999",
-                    }
-                ]
-            }
-        )
-
-    monkeypatch.setattr(music_search.httpx, "get", mismatched_get)
+def test_empty_search_returns_empty_tracks_without_model_call(client) -> None:
+    test_client, search, create = client
+    search.return_value = ("차분한 기타 중심 음악", [])
     response = test_client.post("/v1/chat/messages", json=request_body())
 
     assert response.status_code == 200
     assert "event: text" in response.text
     assert 'event: tracks\ndata: {"tracks": []}' in response.text
     assert "event: done" in response.text
+    create.assert_not_called()
 
 
-def test_chat_rejects_blank_message(client: tuple[TestClient, FakeOpenAI]) -> None:
-    test_client, _ = client
+def test_chat_rejects_blank_message(client) -> None:
+    test_client, search, create = client
     response = test_client.post("/v1/chat/messages", json=request_body("   "))
 
     assert response.status_code == 400
     assert response.json()["code"] == "INVALID_REQUEST"
+    search.assert_not_called()
+    create.assert_not_called()
 
 
-def test_chat_requires_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("has_api_key", [False, True])
+def test_unconnected_search_returns_503_before_creating_model_client(
+    monkeypatch: pytest.MonkeyPatch, has_api_key: bool
+) -> None:
+    if has_api_key:
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    else:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    create_client = Mock(side_effect=AssertionError("모델 클라이언트를 생성하면 안 됩니다."))
+    monkeypatch.setattr(recommendation, "OpenAI", create_client)
+    response = TestClient(main.app).post("/v1/chat/messages", json=request_body())
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "code": "SERVICE_UNAVAILABLE",
+        "message": "음악 DB 검색 연결을 준비 중입니다.",
+        "details": {"reason": "MUSIC_CATALOG_UNAVAILABLE"},
+    }
+    create_client.assert_not_called()
+
+
+def test_chat_requires_openai_api_key_after_search(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _, create = client
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    response = TestClient(main.app).post("/v1/chat/messages", json=request_body("안녕"))
+    response = test_client.post("/v1/chat/messages", json=request_body())
 
     assert response.status_code == 503
-
-
-def test_chat_requires_lastfm_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.delenv("LASTFM_API_KEY", raising=False)
-    monkeypatch.setattr(recommendation, "OpenAI", lambda api_key: FakeOpenAI())
-    response = TestClient(main.app).post("/v1/chat/messages", json=request_body("안녕"))
-
-    assert response.status_code == 503
+    assert response.json()["details"]["reason"] == "MODEL_UNAVAILABLE"
+    create.assert_not_called()
 
 
 def test_health_does_not_call_external_services() -> None:

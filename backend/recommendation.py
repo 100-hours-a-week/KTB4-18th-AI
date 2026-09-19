@@ -28,14 +28,14 @@ def _model_unavailable() -> HTTPException:
 
 
 def prepare_recommendation(message: str) -> tuple[OpenAI, str, list[Track]]:
-    """모델 클라이언트와 현재 검색 구현의 추천곡을 준비한다."""
+    """검색 결과를 확보한 뒤 최종 답변 생성용 모델 클라이언트를 준비한다."""
 
+    search_context, tracks = search_tracks(message)
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise _model_unavailable()
 
     client = OpenAI(api_key=api_key)
-    search_context, tracks = search_tracks(client, message)
     return client, search_context, tracks
 
 
