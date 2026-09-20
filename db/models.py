@@ -16,6 +16,9 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 EMB_DIM = 512
 MODEL_VERSION = "laion-clap-htsat-fused"
 
+GEMINI_EMB_DIM = 3072
+GEMINI_MODEL_VERSION = "gemini-embedding-2"
+
 from pgvector.sqlalchemy import Vector
 VectorType = Vector(EMB_DIM)
 
@@ -47,6 +50,9 @@ class TrackRow(Base):
 
     # NOTE: NULL = 아직 임베딩되지 않음 = 야간 배치 대상. 곧 이것이 DB에 없는 곡 queue 역할
     emb_clap = mapped_column(VectorType, nullable=True)
+
+    # NOTE: gemini-embedding-2 오디오·텍스트 동일 공간 임베딩. emb_clap과 같은 NULL=대기열 패턴
+    emb_gemini = mapped_column(Vector(GEMINI_EMB_DIM), nullable=True)
 
     # NOTE: 임베딩 모델이 다르면 전부 다시 해야 하므로 추가
     model_version: Mapped[str] = mapped_column(String(128), nullable=True)

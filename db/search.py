@@ -49,12 +49,13 @@ def search(
     n = k * overfetch
     exclude_ids = exclude_ids or set()
 
-    dist = TrackRow.emb_clap.cosine_distance(qvec)
+    dist = TrackRow.emb_gemini.cosine_distance(qvec)
     stmt = (
         select(TrackRow, dist.label("dist"))
         # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있는데,
         # API 계약(Track.store_url 필수)을 만족 못 하므로 검색 대상에서 뺀다.
-        .where(TrackRow.emb_clap.isnot(None), TrackRow.store_url.isnot(None))
+        # emb_gemini가 NULL인 곡(아직 gemini로 임베딩 안 된 대기열)은 검색 대상에서 뺀다.
+        .where(TrackRow.emb_gemini.isnot(None), TrackRow.store_url.isnot(None))
         .order_by(dist)
         .limit(n)
     )

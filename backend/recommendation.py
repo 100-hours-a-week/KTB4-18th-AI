@@ -10,7 +10,6 @@ from google import genai  # 되돌릴 때: from openai import OpenAI
 from google.genai import types  # 되돌릴 때: 이 줄 삭제 (OpenAI는 별도 types import 불필요)
 
 from backend.schemas import Track, UserContext
-from batch.embedder import embedder
 
 NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 조금 더 구체적인 질문과 함께 다시 요청해 주세요."
 
@@ -41,53 +40,57 @@ def _catalog_unavailable() -> HTTPException:
     )
 
 
-def sound_description_instructions() -> str:
-    """CLAP 텍스트 인코더 입력용 영어 소리 서술 생성 지시를 반환한다.
-
-    CLAP 텍스트 인코더는 영어 전용이며 장면 묘사가 아닌 오디오 캡션(악기·템포·
-    질감 묘사)에 정렬되어 있다. 장면 서술이나 한국어를 그대로 넣으면 임의
-    입력과 구별되지 않을 정도로 유사도가 낮아진다(실측 0.52 vs 0.28).
-    """
-
-    return (
-        "You convert a listener's request into a description of how the music "
-        "should SOUND, for an audio search engine.\n\n"
-        "Rules:\n"
-        "- Output English only, even if the input is Korean.\n"
-        "- Describe instrumentation, tempo, texture, energy, and mood.\n"
-        "- Do NOT describe the scene, place, weather, or activity. Convert "
-        "those into sound qualities instead.\n"
-        "- Keep it under 15 words. Listing too many attributes dilutes each "
-        "one.\n"
-        "- If a region or culture is implied, you may name characteristic "
-        "instruments.\n"
-        "- Output the description only, with no quotes or preamble."
-    )
-
-
-def to_sound_description(client: genai.Client, message: str) -> str:  # 되돌릴 때: client: OpenAI
-    """사용자 요청을 CLAP 텍스트 인코더용 영어 소리 서술로 변환한다.
-
-    이 서술이 곧 검색 질의가 되는 필수 단계이므로, 이전처럼 원문으로
-    조용히 폴백하지 않고 실패 시 예외를 올린다.
-    """
-
-    try:
-        response = client.models.generate_content(  # 되돌릴 때: client.responses.create(
-            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),  # 되돌릴 때: os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
-            contents=message,  # 되돌릴 때: input=message
-            config=types.GenerateContentConfig(  # 되돌릴 때: 이 config= 인자 삭제하고
-                system_instruction=sound_description_instructions(),  # 위 instructions=sound_description_instructions() 한 줄로 대체
-                thinking_config=types.ThinkingConfig(thinking_budget=0),  # 단순 변환 작업이라 thinking 끔 (토큰 대부분이 thinking에 소모됨)
-            ),
-        )
-    except Exception as error:
-        raise _model_unavailable() from error
-
-    description = (response.text or "").strip()  # 되돌릴 때: response.output_text
-    if not description:
-        raise _model_unavailable()
-    return description
+# NOTE: gemini-embedding-2로 전환하며 주석 처리. CLAP은 영어 전용이라 이
+# 변환이 필수였지만, gemini-embedding-2는 한국어 원문을 그대로 넣어도
+# 유의미한 검색이 된다(실측 확인). CLAP 경로로 되돌릴 때 주석 해제.
+#
+# def sound_description_instructions() -> str:
+#     """CLAP 텍스트 인코더 입력용 영어 소리 서술 생성 지시를 반환한다.
+#
+#     CLAP 텍스트 인코더는 영어 전용이며 장면 묘사가 아닌 오디오 캡션(악기·템포·
+#     질감 묘사)에 정렬되어 있다. 장면 서술이나 한국어를 그대로 넣으면 임의
+#     입력과 구별되지 않을 정도로 유사도가 낮아진다(실측 0.52 vs 0.28).
+#     """
+#
+#     return (
+#         "You convert a listener's request into a description of how the music "
+#         "should SOUND, for an audio search engine.\n\n"
+#         "Rules:\n"
+#         "- Output English only, even if the input is Korean.\n"
+#         "- Describe instrumentation, tempo, texture, energy, and mood.\n"
+#         "- Do NOT describe the scene, place, weather, or activity. Convert "
+#         "those into sound qualities instead.\n"
+#         "- Keep it under 15 words. Listing too many attributes dilutes each "
+#         "one.\n"
+#         "- If a region or culture is implied, you may name characteristic "
+#         "instruments.\n"
+#         "- Output the description only, with no quotes or preamble."
+#     )
+#
+#
+# def to_sound_description(client: genai.Client, message: str) -> str:
+#     """사용자 요청을 CLAP 텍스트 인코더용 영어 소리 서술로 변환한다.
+#
+#     이 서술이 곧 검색 질의가 되는 필수 단계이므로, 이전처럼 원문으로
+#     조용히 폴백하지 않고 실패 시 예외를 올린다.
+#     """
+#
+#     try:
+#         response = client.models.generate_content(
+#             model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+#             contents=message,
+#             config=types.GenerateContentConfig(
+#                 system_instruction=sound_description_instructions(),
+#                 thinking_config=types.ThinkingConfig(thinking_budget=0),
+#             ),
+#         )
+#     except Exception as error:
+#         raise _model_unavailable() from error
+#
+#     description = (response.text or "").strip()
+#     if not description:
+#         raise _model_unavailable()
+#     return description
 
 
 def reason_instructions() -> str:
@@ -142,13 +145,39 @@ def assign_reasons(
             ),
         )
         data = json.loads(response.text or "{}")  # 되돌릴 때: response.output_text
-    except Exception:
+    except Exception as error:
+        # NOTE: 실패해도 추천 자체는 이어가되(폴백 문구 유지), 원인은 남긴다.
+        # 예전엔 여기서 조용히 삼켜서 실패 원인을 못 찾은 적이 있었다.
+        print(f"[assign_reasons] 이유 생성 실패: {type(error).__name__}: {error}")
         return
 
     for t in tracks:
         reason = data.get(t.track_id)
         if isinstance(reason, str) and reason.strip():
             t.reason = reason.strip()
+
+
+def embed_query(client: genai.Client, message: str) -> list[float]:
+    """사용자 메시지를 gemini-embedding으로 그대로 벡터화한다.
+
+    CLAP과 달리 오디오·텍스트가 같은 벡터 공간이고 다국어를 지원해, 영어
+    소리 서술로 변환하지 않고 한국어 원문을 그대로 넣어도 유의미한 검색
+    결과가 나온다(실측 확인됨).
+
+    모델명은 폴백 없이 env에서만 읽는다 — DB에 저장된 emb_gemini 벡터를
+    만든 모델과 한 글자라도 다르면 벡터 공간이 어긋나 검색이 조용히
+    깨지므로, 하드코딩된 기본값으로 숨기지 않고 설정 누락을 바로 드러낸다.
+    """
+
+    model = os.getenv("GEMINI_EMBEDDING_MODEL")
+    if not model:
+        raise _model_unavailable()
+
+    try:
+        response = client.models.embed_content(model=model, contents=message)
+    except Exception as error:
+        raise _model_unavailable() from error
+    return response.embeddings[0].values
 
 
 def prepare_recommendation(message: str) -> tuple[genai.Client, list[Track]]:  # 되돌릴 때: tuple[OpenAI, list[Track]]
@@ -159,12 +188,7 @@ def prepare_recommendation(message: str) -> tuple[genai.Client, list[Track]]:  #
         raise _model_unavailable()
 
     client = genai.Client(api_key=api_key)  # 되돌릴 때: OpenAI(api_key=api_key)
-    sound_description = to_sound_description(client, message)
-
-    try:
-        qvec = embedder.embed_text(sound_description)
-    except Exception as error:
-        raise _model_unavailable() from error
+    qvec = embed_query(client, message)
 
     try:
         # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
@@ -173,7 +197,7 @@ def prepare_recommendation(message: str) -> tuple[genai.Client, list[Track]]:  #
         from db.search import search as vector_search
 
         with SessionLocal() as session:
-            tracks, mood_tags_by_id = vector_search(session, qvec, sound_description)
+            tracks, mood_tags_by_id = vector_search(session, qvec, message)
     except Exception as error:
         raise _catalog_unavailable() from error
 
