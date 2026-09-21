@@ -7,3 +7,7 @@ __pycache__/
 .env.*
 !.env.example
 .pytest_cache/
+
+# 재생성 가능한 로컬 산출물 (임베딩/메타데이터, 다운로드된 모델 가중치)
+out/
+models/
