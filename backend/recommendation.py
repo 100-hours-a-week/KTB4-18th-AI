@@ -6,8 +6,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from fastapi import HTTPException
-from google import genai  # 되돌릴 때: from openai import OpenAI
-from google.genai import types  # 되돌릴 때: 이 줄 삭제 (OpenAI는 별도 types import 불필요)
+from google import genai
+from openai import OpenAI
 
 from backend.schemas import Track, UserContext
 
@@ -108,7 +108,7 @@ def reason_instructions() -> str:
 
 
 def assign_reasons(
-    client: genai.Client,  # 되돌릴 때: client: OpenAI
+    client: OpenAI,
     message: str,
     tracks: list[Track],
     mood_tags_by_id: dict[str, dict],
@@ -135,16 +135,12 @@ def assign_reasons(
         ],
     }
     try:
-        response = client.models.generate_content(  # 되돌릴 때: client.responses.create(
-            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),  # 되돌릴 때: os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
-            contents=json.dumps(payload, ensure_ascii=False),  # 되돌릴 때: input=json.dumps(payload, ensure_ascii=False)
-            config=types.GenerateContentConfig(  # 되돌릴 때: 이 config= 인자 삭제하고
-                system_instruction=reason_instructions(),  # 위 instructions=reason_instructions() 한 줄로 대체
-                thinking_config=types.ThinkingConfig(thinking_budget=0),  # 단순 JSON 매핑 작업이라 thinking 끔
-                response_mime_type="application/json",  # Gemini가 ```json 코드펜스로 감싸서 json.loads가 깨지는 걸 방지
-            ),
+        response = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            instructions=reason_instructions(),
+            input=json.dumps(payload, ensure_ascii=False),
         )
-        data = json.loads(response.text or "{}")  # 되돌릴 때: response.output_text
+        data = json.loads(response.output_text or "{}")
     except Exception as error:
         # NOTE: 실패해도 추천 자체는 이어가되(폴백 문구 유지), 원인은 남긴다.
         # 예전엔 여기서 조용히 삼켜서 실패 원인을 못 찾은 적이 있었다.
@@ -180,15 +176,21 @@ def embed_query(client: genai.Client, message: str) -> list[float]:
     return response.embeddings[0].values
 
 
-def prepare_recommendation(message: str) -> tuple[genai.Client, list[Track]]:  # 되돌릴 때: tuple[OpenAI, list[Track]]
+def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
     """모델 클라이언트와 pgvector 검색 결과의 추천곡을 준비한다."""
 
-    api_key = os.getenv("GEMINI_API_KEY")  # 되돌릴 때: os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not gemini_api_key or not api_key:
         raise _model_unavailable()
 
-    client = genai.Client(api_key=api_key)  # 되돌릴 때: OpenAI(api_key=api_key)
-    qvec = embed_query(client, message)
+    # NOTE: 검색용 임베딩은 DB의 emb_gemini와 같은 모델(gemini-embedding-2)로
+    # 만들어야 벡터 공간이 맞는다. 채팅 응답 생성 provider를 OpenAI(추후
+    # OpenRouter)로 바꾸더라도 임베딩은 별도로 Gemini 클라이언트를 쓴다.
+    embedding_client = genai.Client(api_key=gemini_api_key)
+    qvec = embed_query(embedding_client, message)
+
+    client = OpenAI(api_key=api_key)
 
     try:
         # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
@@ -239,7 +241,7 @@ def sse(event: str, data: Any) -> str:
 
 
 def stream_answer(
-    client: genai.Client,  # 되돌릴 때: client: OpenAI
+    client: OpenAI,
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
@@ -252,19 +254,39 @@ def stream_answer(
         yield sse("done", {})
         return
 
+    error_message = "챗봇 응답 스트리밍에 실패했습니다."
+
     try:
-        stream = client.models.generate_content_stream(  # 되돌릴 때: client.responses.create(
-            model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),  # 되돌릴 때: os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
-            contents=answer_input(message, tracks, user_context),  # 되돌릴 때: input=answer_input(message, tracks, user_context)
-            config=types.GenerateContentConfig(  # 되돌릴 때: 이 config= 인자 삭제하고
-                system_instruction=answer_instructions(),  # 위 instructions=answer_instructions() 로 대체 + 마지막에 stream=True 추가
-                thinking_config=types.ThinkingConfig(thinking_budget=0),  # 1~3문장짜리 안내 멘트라 thinking 끔
-            ),
+        stream = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            instructions=answer_instructions(),
+            input=answer_input(message, tracks, user_context),
+            stream=True,
         )
-        for chunk in stream:  # 되돌릴 때: for event in stream:
-            if chunk.text:  # 되돌릴 때: if event.type == "response.output_text.delta":
-                yield sse("text", {"delta": chunk.text})  # 되돌릴 때: {"delta": event.delta}
-        yield sse("tracks", {"tracks": [track.model_dump() for track in tracks]})
-        yield sse("done", {})
+
+        with stream:
+            for event in stream:
+                if event.type == "response.output_text.delta":
+                    yield sse("text", {"delta": event.delta})
+
+                elif event.type == "response.completed":
+                    yield sse(
+                        "tracks",
+                        {"tracks": [track.model_dump() for track in tracks]},
+                    )
+                    yield sse("done", {})
+                    return
+
+                elif event.type in (
+                    "response.failed",
+                    "response.incomplete",
+                    "error",
+                ):
+                    yield sse("error", {"detail": error_message})
+                    return
+
+        # 완료 이벤트 없이 연결이 끝나면 성공으로 처리하지 않는다.
+        yield sse("error", {"detail": error_message})
+
     except Exception:
-        yield sse("error", {"detail": "챗봇 응답 스트리밍에 실패했습니다."})
+        yield sse("error", {"detail": error_message})

@@ -4,13 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.recommendation import prepare_recommendation, stream_answer
-from backend.schemas import ChatRequest, HealthResponse
+from backend.schemas import ChatRequest, ErrorResponse, HealthResponse, TranscriptionResponse
+from backend.transcriptions import transcribe_audio
 
 # ===== 애플리케이션 설정 =====
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +31,17 @@ def health() -> HealthResponse:
 @app.post(
     "/v1/chat/messages",
     response_class=StreamingResponse,
-    responses={200: {"content": {"text/event-stream": {}}}},
+    responses={
+        200: {"content": {"text/event-stream": {}}},
+        422: {
+            "model": ErrorResponse,
+            "description": "요청값 검증 실패",
+        },
+        503: {
+            "model": ErrorResponse,
+            "description": "모델 또는 음악 검색 서비스 사용 불가",
+        },
+    },
     tags=["chat"],
 )
 def chat(body: ChatRequest) -> StreamingResponse:
@@ -47,17 +58,26 @@ def chat(body: ChatRequest) -> StreamingResponse:
     )
 
 
-@app.post("/v1/transcriptions", include_in_schema=False, tags=["transcriptions"])
-def transcriptions() -> None:
-    """Spring Backend가 전달한 음성 파일을 텍스트로 변환한다.
+@app.post(
+    "/v1/transcriptions",
+    response_model=TranscriptionResponse,
+    responses={
+        422: {
+            "model": ErrorResponse,
+            "description": "audio 파일 누락 등 요청값 검증 실패",
+        },
+        501: {
+            "model": ErrorResponse,
+            "description": "STT 현재 아직 미구현",
+        },
+    },
+    tags=["transcriptions"],
+)
+def transcriptions(audio: UploadFile) -> TranscriptionResponse:
+    """녹음 파일을 받아 입력창에 표시할 전사 초안을 JSON으로 반환한다."""
 
-    현재는 구현하지 않고,
-    클라이언트 측에서 녹음된 음성 파일 전송 정책(어떤 파일 확장자, 통신 방법)을 결정한 뒤 구현 예정.
-    에러 처리 관련 상태 코드와 메세지는 확정 후 추가 수정이 필요.
-    """
-
-    # TODO: STT API 사용에 대한 근거를 조금 더 보충한 뒤, 사용할 API or 라이브러리를 확정지어 이어서 구현.
-    raise HTTPException(status_code=501, detail="Not Implemented")
+    # NOTE: FE는 최대 60초 녹음 후 multipart의 audio 필드로 파일을 전송한다.
+    return TranscriptionResponse(transcript=transcribe_audio(audio))
 
 
 # ===== API 오류 처리 =====
@@ -65,10 +85,10 @@ def transcriptions() -> None:
 async def validation_error_handler(
     _request: Request, _error: RequestValidationError
 ) -> JSONResponse:
-    """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환."""
+    """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환한다."""
 
     return JSONResponse(
-        status_code=400,
+        status_code=422,
         content={
             "code": "INVALID_REQUEST",
             "message": "요청값이 올바르지 않습니다.",
