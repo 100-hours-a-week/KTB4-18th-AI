@@ -1,31 +1,23 @@
-"""추천 그래프의 노드 간에 주고받는 상태 정의.
-
-TODO: 노드를 채워나가며 실제로 필요한 필드만 남기고 정리할 것.
-"""
-from google import genai
-
+"""추천 그래프의 노드 간에 주고받는 상태 정의."""
 
 from typing import TypedDict
+
+from openai import OpenAI
 
 from backend.schemas import Track, UserContext
 
 
 class RecommendationState(TypedDict, total=False):
     """음악 추천 파이프라인의 상태."""
-    genai_client: genai.Client
+
+    # ── 입력 ──
     message: str
-    query_vector: list[float]
-
     user_context: UserContext | None
+    client: OpenAI  # reason_node가 사용. genai client는 embed_node 안에서만 쓰여 state에 안 둠.
 
-    
+    # ── embed_node가 채움 ──
+    query_vector: list[float]
 
     # ── search_node가 채움 ──
     tracks: list[Track]
-    mood_tags_by_id: dict[str, dict]
-
-    # ── reason_node가 채움 ──
-    # tracks[i].reason을 갱신하는 방식이라 별도 필드가 필요 없을 수도 있음
-
-    # ── answer_node가 채움 ──
-    answer: str
+    mood_tags: dict[str, dict]

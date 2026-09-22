@@ -37,11 +37,8 @@ def search(
     genres: list[str] = None,
     overfetch: int = 6,
 ) -> tuple[list[Track], dict[str, dict]]:
-    """sqlalchemy를 이용해 임베딩이 들어있는 DB에서 유사도가 높은 순서로 API Track을 가져옴
-
-    두 번째 반환값은 track_id별 mood_tags다. mood_tags는 API Track 계약에
-    없으므로(Spring Backend로 나가지 않음) 따로 내려준다 — 호출 측이 곡별
-    추천 이유를 생성할 때 근거로 쓴다.
+    """sqlalchemy를 이용해 임베딩이 들어있는 DB에서 유사도가 높은 순서로 API Track을 가져옴.
+    두 번째 반환값은 Effnet을 통해 구한 track_id별 mood_tags다. 호출 측이 곡별ㅜ추천 이유를 생성할 때 근거로 쓴다.
     """
 
     # NOTE: overfetch 방식은 일리는 있으나, 더 많이 가져오는데 문제가 있으면 수정해도 괜찮다
@@ -72,9 +69,8 @@ def search(
     hits = [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
     hits = _dedup(hits, k)
 
-    # NOTE: 곡별 이유는 호출 측이 mood_tags를 근거로 채운다. LLM 호출이 실패하면
-    # 이 공통 문구가 폴백으로 남는다.
-    reason = f"'{sound_description}' 소리 특징과 어울리는 곡입니다."
+    # NOTE: LLM 호출이 실패용 이유 공통 폴백 문구다.
+    reason = f"'{sound_description}' 상황에 어울리는 곡입니다."
     tracks = [
         Track(
             track_id=str(hit.track.track_id),

@@ -92,6 +92,31 @@ def _catalog_unavailable() -> HTTPException:
 #         raise _model_unavailable()
 #     return description
 
+def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
+    """OpenAI client를 준비하고 추천 그래프를 실행해 검증된 추천곡을 얻는다."""
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise _model_unavailable()
+    client = OpenAI(api_key=api_key)
+
+    # NOTE: recommendation → graph.graph → graph.nodes → recommendation로 이어지는
+    # 순환 import를 피하려고 그래프 모듈은 호출 시점에 import한다.
+    from backend.graph.graph import build_graph
+
+    result = build_graph().invoke({"message": message, "client": client})
+
+    return client, result["tracks"]
+
+
+def get_genai_client() -> genai.Client:
+    """GEMINI_API_KEY로 embed_query용 genai.Client를 생성한다."""
+
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_api_key:
+        raise _model_unavailable()
+    return genai.Client(api_key=gemini_api_key)
+
 
 def embed_query(client: genai.Client, message: str) -> list[float]:
     """사용자 쿼리를 제미나이 임베딩 벡터로 바꾼다."""
@@ -109,6 +134,27 @@ def embed_query(client: genai.Client, message: str) -> list[float]:
     if not embedded_query:
         raise _model_unavailable()
     return embedded_query
+
+
+def vector_recommendation(
+    qvec: list[float],
+    message: str,
+) -> tuple[list[Track], dict[str, dict]]:
+    """pgvector 검색 결과의 추천곡과 무드 태그를 가져온다."""
+
+    try:
+        # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
+        # DATABASE_URL이 아직 없을 수 있어, 요청 처리 시점까지 import를 늦춘다.
+        from db.models import SessionLocal
+        from db.search import search as vector_search
+
+        with SessionLocal() as session:
+            tracks, mood_tags_by_id = vector_search(session, qvec, message)
+    except Exception as error:
+        raise _catalog_unavailable() from error
+
+    return tracks, mood_tags_by_id
+
 
 def reason_instructions() -> str:
     """곡별 추천 이유 생성을 위한 지시를 반환한다."""
@@ -130,11 +176,8 @@ def assign_reasons(
     tracks: list[Track],
     mood_tags_by_id: dict[str, dict],
 ) -> None:
-    """TrackRow.mood_tags를 근거로 검증된 추천곡에 곡별 추천 이유를 채운다.
-
-    실패하면 db.search.search()가 채운 공통 문구를 그대로 둔다 — 추천 자체는
-    이어가되 이유만 덜 구체적인 상태로 응답한다.
-    """
+    """추천곡마다 곡별 추천 이유를 채운다.
+    실패하면 db.search.search()가 채운 공통 문구를 그대로 둔다."""
 
     if not tracks:
         return
@@ -160,7 +203,7 @@ def assign_reasons(
         data = json.loads(response.output_text or "{}")
     except Exception as error:
         # NOTE: 실패해도 추천 자체는 이어가되(폴백 문구 유지), 원인은 남긴다.
-        # 예전엔 여기서 조용히 삼켜서 실패 원인을 못 찾은 적이 있었다.
+        # 여기서 실패 원인을 못 찾은 적이 있었다.
         print(f"[assign_reasons] 이유 생성 실패: {type(error).__name__}: {error}")
         return
 
@@ -168,39 +211,6 @@ def assign_reasons(
         reason = data.get(t.track_id)
         if isinstance(reason, str) and reason.strip():
             t.reason = reason.strip()
-
-
-def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
-    """모델 클라이언트와 pgvector 검색 결과의 추천곡을 준비한다."""
-
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not gemini_api_key or not api_key:
-        raise _model_unavailable()
-
-    # NOTE: 검색용 임베딩은 DB의 emb_gemini와 같은 모델(gemini-embedding-2)로
-    # 만들어야 벡터 공간이 맞는다. 채팅 응답 생성 provider를 OpenAI(추후
-    # OpenRouter)로 바꾸더라도 임베딩은 별도로 Gemini 클라이언트를 쓴다.
-    embedding_client = genai.Client(api_key=gemini_api_key)
-    qvec = embed_query(embedding_client, message)
-
-    client = OpenAI(api_key=api_key)
-
-    try:
-        # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
-        # DATABASE_URL이 아직 없을 수 있어, 요청 처리 시점까지 import를 늦춘다.
-        from db.models import SessionLocal
-        from db.search import search as vector_search
-
-        with SessionLocal() as session:
-            tracks, mood_tags_by_id = vector_search(session, qvec, message)
-    except Exception as error:
-        raise _catalog_unavailable() from error
-
-    assign_reasons(client, message, tracks, mood_tags_by_id)
-
-    return client, tracks
-
 
 
 def answer_input(
