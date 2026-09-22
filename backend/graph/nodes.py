@@ -1,9 +1,5 @@
 """RecommendationState를 받아 부분 상태(dict)를 반환하는 LangGraph 노드.
-
-각 노드는 backend/recommendation.py에 있는 기존 로직을 그대로 호출하는 얇은
-wrapper다. 실제 로직(embed_query, vector_recommendation, assign_reasons,
-get_genai_client)은 recommendation.py에 순수 함수로 남겨 단위 테스트와 그래프
-밖 재사용을 유지한다.
+각 노드는 기존 로직을 그대로 호출하는 얇은 wrapper다.
 """
 
 from backend.graph.state import RecommendationState
