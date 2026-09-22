@@ -33,7 +33,7 @@ def health() -> HealthResponse:
     response_class=StreamingResponse,
     responses={
         200: {"content": {"text/event-stream": {}}},
-        422: {
+        400: {
             "model": ErrorResponse,
             "description": "요청값 검증 실패",
         },
@@ -86,7 +86,7 @@ async def validation_error_handler(
     """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환한다."""
 
     return JSONResponse(
-        status_code=422,
+        status_code=400,
         content={
             "code": "INVALID_REQUEST",
             "message": "요청값이 올바르지 않습니다.",
