@@ -66,10 +66,10 @@ def chat(body: ChatRequest) -> StreamingResponse:
             "model": ErrorResponse,
             "description": "audio 파일 누락 등 요청값 검증 실패",
         },
-        501: {
-            "model": ErrorResponse,
-            "description": "STT 현재 아직 미구현",
-        },
+        400: {"model": ErrorResponse, "description": "빈 음성, 길이 초과 또는 인식된 발화 없음"},
+        413: {"model": ErrorResponse, "description": "음성 파일 용량 초과"},
+        415: {"model": ErrorResponse, "description": "지원하지 않거나 손상된 음성 파일"},
+        503: {"model": ErrorResponse, "description": "전사 서비스 사용 불가"},
     },
     tags=["transcriptions"],
 )
