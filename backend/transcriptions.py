@@ -36,6 +36,9 @@ def _unavailable() -> HTTPException:
 
 def _audio_format(data: bytes, content_type: str | None) -> str:
     """선언된 MIME과 컨테이너 시그니처가 일치하는 파일만 허용한다."""
+    # NOTE: 현재 녹음 UI는 WebM·MP4·Ogg 중 지원 형식을 선택한다. 아래는 업로드 허용 범위다.
+    # TODO: 풀스택 연동 시 FE 녹음 MIME·BE 전달 Content-Type·파일 업로드 지원 범위를 합의하고,
+    # 허용 목록·시그니처 검사·포맷 테스트·API 문서를 함께 조정한다.
     formats = {
         "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
         "audio/webm": "matroska", "audio/mp4": "mov", "audio/x-m4a": "mov",
