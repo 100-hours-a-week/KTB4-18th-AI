@@ -6,6 +6,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "google-genai>=1.0.0",  # 검색용 임베딩(gemini-embedding-2) 호출 전용, 채팅 응답 provider와 무관하게 유지
+    "langgraph>=0.2.0",
     "openai>=3.6.0",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.20",

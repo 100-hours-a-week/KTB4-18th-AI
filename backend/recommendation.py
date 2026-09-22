@@ -93,6 +93,23 @@ def _catalog_unavailable() -> HTTPException:
 #     return description
 
 
+def embed_query(client: genai.Client, message: str) -> list[float]:
+    """사용자 쿼리를 제미나이 임베딩 벡터로 바꾼다."""
+
+    model = os.getenv("GEMINI_EMBEDDING_MODEL")
+    if not model:
+        raise _model_unavailable()
+
+    try:
+        response = client.models.embed_content(model=model, contents=message)
+        # NOTE: 반환된 벡터가 쓰레기 값인 경우 추가
+        embedded_query = response.embeddings[0].values if response.embeddings else None
+    except Exception as error:
+        raise _model_unavailable() from error
+    if not embedded_query:
+        raise _model_unavailable()
+    return embedded_query
+
 def reason_instructions() -> str:
     """곡별 추천 이유 생성을 위한 지시를 반환한다."""
 
@@ -153,29 +170,6 @@ def assign_reasons(
             t.reason = reason.strip()
 
 
-def embed_query(client: genai.Client, message: str) -> list[float]:
-    """사용자 메시지를 gemini-embedding으로 그대로 벡터화한다.
-
-    CLAP과 달리 오디오·텍스트가 같은 벡터 공간이고 다국어를 지원해, 영어
-    소리 서술로 변환하지 않고 한국어 원문을 그대로 넣어도 유의미한 검색
-    결과가 나온다(실측 확인됨).
-
-    모델명은 폴백 없이 env에서만 읽는다 — DB에 저장된 emb_gemini 벡터를
-    만든 모델과 한 글자라도 다르면 벡터 공간이 어긋나 검색이 조용히
-    깨지므로, 하드코딩된 기본값으로 숨기지 않고 설정 누락을 바로 드러낸다.
-    """
-
-    model = os.getenv("GEMINI_EMBEDDING_MODEL")
-    if not model:
-        raise _model_unavailable()
-
-    try:
-        response = client.models.embed_content(model=model, contents=message)
-    except Exception as error:
-        raise _model_unavailable() from error
-    return response.embeddings[0].values
-
-
 def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
     """모델 클라이언트와 pgvector 검색 결과의 추천곡을 준비한다."""
 
@@ -206,6 +200,7 @@ def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
     assign_reasons(client, message, tracks, mood_tags_by_id)
 
     return client, tracks
+
 
 
 def answer_input(
