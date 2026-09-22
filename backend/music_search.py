@@ -105,7 +105,7 @@ def search_tracks(client: OpenAI, message: str) -> tuple[str, list[Track]]:
 
     try:
         tag_response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=os.environ["LLM_MODEL"],
             instructions=(
                 "사용자의 음악 요청을 Last.fm tag.getTopTracks 검색에 사용할 영어 태그 "
                 "하나로 바꾸세요. 사용자가 밝힌 취향을 최우선으로 반영하고, 별도 취향이 "

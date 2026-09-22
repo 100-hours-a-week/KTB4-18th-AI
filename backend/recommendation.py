@@ -1,12 +1,12 @@
 """음악 검색 결과를 사용자 응답으로 만드는 V1 추천 흐름."""
 
 import json
+import math
 import os
 from collections.abc import Iterator
 from typing import Any
 
 from fastapi import HTTPException
-from google import genai
 from openai import OpenAI
 
 from backend.schemas import Track, UserContext
@@ -136,7 +136,7 @@ def assign_reasons(
     }
     try:
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=os.environ["LLM_MODEL"],
             instructions=reason_instructions(),
             input=json.dumps(payload, ensure_ascii=False),
         )
@@ -144,16 +144,18 @@ def assign_reasons(
     except Exception as error:
         # NOTE: 실패해도 추천 자체는 이어가되(폴백 문구 유지), 원인은 남긴다.
         # 예전엔 여기서 조용히 삼켜서 실패 원인을 못 찾은 적이 있었다.
-        print(f"[assign_reasons] 이유 생성 실패: {type(error).__name__}: {error}")
+        print(f"[assign_reasons] 이유 생성 실패: {type(error).__name__}")
         return
 
+    if not isinstance(data, dict):
+        return
     for t in tracks:
         reason = data.get(t.track_id)
         if isinstance(reason, str) and reason.strip():
             t.reason = reason.strip()
 
 
-def embed_query(client: genai.Client, message: str) -> list[float]:
+def embed_query(client: OpenAI, message: str) -> list[float]:
     """사용자 메시지를 gemini-embedding으로 그대로 벡터화한다.
 
     CLAP과 달리 오디오·텍스트가 같은 벡터 공간이고 다국어를 지원해, 영어
@@ -165,32 +167,38 @@ def embed_query(client: genai.Client, message: str) -> list[float]:
     깨지므로, 하드코딩된 기본값으로 숨기지 않고 설정 누락을 바로 드러낸다.
     """
 
-    model = os.getenv("GEMINI_EMBEDDING_MODEL")
-    if not model:
+    model = os.getenv("EMBEDDING_MODEL")
+    if model != "google/gemini-embedding-2":
         raise _model_unavailable()
 
     try:
-        response = client.models.embed_content(model=model, contents=message)
+        response = client.embeddings.create(
+            model=model, input=message, dimensions=3072, encoding_format="float",
+        )
+        vector = response.data[0].embedding
+        if len(vector) != 3072 or not all(math.isfinite(x) for x in vector) or not any(vector):
+            raise ValueError("Invalid embedding")
+        return vector
     except Exception as error:
         raise _model_unavailable() from error
-    return response.embeddings[0].values
 
 
 def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
     """모델 클라이언트와 pgvector 검색 결과의 추천곡을 준비한다."""
 
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not gemini_api_key or not api_key:
+    embedding_api_key = os.getenv("OPENROUTER_EMBEDDING_API_KEY", "").strip()
+    api_key = os.getenv("OPENROUTER_LLM_API_KEY", "").strip()
+    if any(not key or key.startswith("<") for key in (embedding_api_key, api_key)) or not os.getenv("LLM_MODEL", "").strip():
         raise _model_unavailable()
 
     # NOTE: 검색용 임베딩은 DB의 emb_gemini와 같은 모델(gemini-embedding-2)로
-    # 만들어야 벡터 공간이 맞는다. 채팅 응답 생성 provider를 OpenAI(추후
-    # OpenRouter)로 바꾸더라도 임베딩은 별도로 Gemini 클라이언트를 쓴다.
-    embedding_client = genai.Client(api_key=gemini_api_key)
-    qvec = embed_query(embedding_client, message)
+    # 만들어야 벡터 공간이 맞는다. 기능별 키를 분리해 비용 한도를 관리한다.
+    with OpenAI(api_key=embedding_api_key, base_url="https://openrouter.ai/api/v1",
+                timeout=30.0, max_retries=0) as embedding_client:
+        qvec = embed_query(embedding_client, message)
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
+                    timeout=30.0, max_retries=0)
 
     try:
         # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
@@ -258,7 +266,7 @@ def stream_answer(
 
     try:
         stream = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=os.environ["LLM_MODEL"],
             instructions=answer_instructions(),
             input=answer_input(message, tracks, user_context),
             stream=True,
