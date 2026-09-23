@@ -43,7 +43,7 @@ def test_legacy_keys_do_not_enable_recommendation(monkeypatch):
     monkeypatch.delenv("OPENROUTER_LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_EMBEDDING_API_KEY", raising=False)
     with pytest.raises(HTTPException) as error:
-        recommendation.prepare_recommendation("음악")
+        recommendation.prepare_recommendation("음악", "legacy-key-test")
     assert error.value.status_code == 503
 
 
