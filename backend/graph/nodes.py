@@ -9,7 +9,7 @@ from backend.recommendation import (
     assign_reasons,
     classify_intent,
     embed_query,
-    get_genai_client,
+    get_embedding_client,
     vector_recommendation,
 )
 
@@ -24,8 +24,8 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
 def embed_node(state: RecommendationState) -> dict:
     """사용자 메시지를 검색용 벡터로 변환한다."""
 
-    genai_client = get_genai_client()
-    query_vector = embed_query(genai_client, state["message"])
+    embedding_client = get_embedding_client()
+    query_vector = embed_query(embedding_client, state["message"])
     return {"query_vector": query_vector}
 
 

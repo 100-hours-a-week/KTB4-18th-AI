@@ -6,12 +6,12 @@ from collections.abc import Iterator
 from typing import Any
 
 from fastapi import HTTPException
-from google import genai
 from openai import OpenAI
 
 from backend.schemas import Track, UserContext
 
 NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 조금 더 구체적인 질문과 함께 다시 요청해 주세요."
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def _model_unavailable() -> HTTPException:
@@ -123,7 +123,7 @@ def classify_intent(client: OpenAI, messages: list[str]) -> str:
 
     try:
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=os.getenv("OPENROUTER_MODEL", "gpt-5.6-luna"),
             instructions=classify_instructions(),
             input=json.dumps({"conversation": messages}, ensure_ascii=False),
             text={
@@ -169,10 +169,10 @@ def prepare_recommendation(message: str, thread_id: str) -> tuple[OpenAI, list[T
     생기면 각 분기의 진짜 응답으로 교체할 것.
     """
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise _model_unavailable()
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
     # NOTE: recommendation → graph.graph → graph.nodes → recommendation로 이어지는
     # 순환 import를 피하려고 그래프 모듈은 호출 시점에 import한다.
@@ -190,26 +190,35 @@ def prepare_recommendation(message: str, thread_id: str) -> tuple[OpenAI, list[T
     return client, result["tracks"]
 
 
-def get_genai_client() -> genai.Client:
-    """GEMINI_API_KEY로 embed_query용 genai.Client를 생성한다."""
+def get_embedding_client() -> OpenAI:
+    """OPENROUTER_EMBEDDING_API_KEY로 embed_query용 OpenAI(OpenRouter) client를 생성한다."""
 
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_api_key:
+    api_key = os.getenv("OPENROUTER_EMBEDDING_API_KEY")
+    if not api_key:
         raise _model_unavailable()
-    return genai.Client(api_key=gemini_api_key)
+    return OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 
-def embed_query(client: genai.Client, message: str) -> list[float]:
-    """사용자 쿼리를 제미나이 임베딩 벡터로 바꾼다."""
+def embed_query(client: OpenAI, message: str) -> list[float]:
+    """사용자 쿼리를 OpenRouter 경유 gemini-embedding-2 벡터로 바꾼다."""
 
-    model = os.getenv("GEMINI_EMBEDDING_MODEL")
+    model = os.getenv("OPENROUTER_EMBEDDING_MODEL")
     if not model:
         raise _model_unavailable()
 
+    # NOTE: OpenRouter 경유 호출이라도 tracks.emb_gemini(db/models.py의
+    # GEMINI_EMB_DIM)와 차원이 어긋나면 에러 없이 유사도 검색 품질만 조용히
+    # 나빠진다. dimensions를 명시해 항상 그 값에 맞춘다.
+    # TODO: OpenRouter가 Gemini 임베딩에 dimensions를 실제로 반영하는지,
+    # 결과 벡터가 direct Gemini API 호출과 수치까지 동일한지 실측 확인 필요.
+    from db.models import GEMINI_EMB_DIM
+
     try:
-        response = client.models.embed_content(model=model, contents=message)
+        response = client.embeddings.create(
+            model=model, input=message, dimensions=GEMINI_EMB_DIM
+        )
         # NOTE: 반환된 벡터가 쓰레기 값인 경우 추가
-        embedded_query = response.embeddings[0].values if response.embeddings else None
+        embedded_query = response.data[0].embedding if response.data else None
     except Exception as error:
         raise _model_unavailable() from error
     if not embedded_query:
@@ -277,7 +286,7 @@ def assign_reasons(
     }
     try:
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=os.getenv("OPENROUTER_MODEL", "gpt-5.6-luna"),
             instructions=reason_instructions(),
             input=json.dumps(payload, ensure_ascii=False),
         )
@@ -344,7 +353,7 @@ def stream_answer(
 
     try:
         stream = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=os.getenv("OPENROUTER_MODEL", "gpt-5.6-luna"),
             instructions=answer_instructions(),
             input=answer_input(message, tracks, user_context),
             stream=True,

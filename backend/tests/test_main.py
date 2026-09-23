@@ -83,9 +83,9 @@ class FakeOpenAI:
 def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     """파이프라인의 일부만 바꾸게 하는 애가 얘다."""
     fake_openai = FakeOpenAI()
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.6-luna")
-    monkeypatch.setattr(recommendation, "OpenAI", lambda api_key: fake_openai)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "gpt-5.6-luna")
+    monkeypatch.setattr(recommendation, "OpenAI", lambda api_key, base_url=None: fake_openai)
 
     # NOTE: classify_node는 OpenAI 구조화 출력으로 intent를 뽑는데, 여기 fixture의
     # FakeOpenAI는 이유 생성용 JSON만 흉내내므로 intent 분류는 목으로 고정해
@@ -95,8 +95,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     # NOTE: embed_node/search_node는 각각 Gemini 임베딩 API와 PostgreSQL(pgvector) 조회라는
     # 외부 I/O 경계이므로, 그 경계에서 가짜 값을 주입해 그래프 배선(embed → search →
     # reason)은 실제 코드로 검증한다.
-    monkeypatch.setattr(nodes, "get_genai_client", lambda: object())
-    monkeypatch.setattr(nodes, "embed_query", lambda genai_client, message: [0.1, 0.2, 0.3])
+    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(nodes, "embed_query", lambda embedding_client, message: [0.1, 0.2, 0.3])
     monkeypatch.setattr(
         nodes,
         "vector_recommendation",
@@ -175,19 +175,19 @@ def test_chat_rejects_blank_message(client: tuple[TestClient, FakeOpenAI]) -> No
     assert response.json()["code"] == "INVALID_REQUEST"
 
 
-def test_chat_requires_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """openai api key가 없으면 오류가 잘 나오는지 확인한다."""
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_chat_requires_openrouter_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openrouter api key가 없으면 오류가 잘 나오는지 확인한다."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     response = TestClient(main.app).post("/v1/chat/messages", json=request_body("안녕"))
 
     assert response.status_code == 503
 
 
-def test_chat_requires_gemini_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """gemini api key가 없으면 오류가 잘 나오는지 확인한다."""
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setattr(recommendation, "OpenAI", lambda api_key: FakeOpenAI())
+def test_chat_requires_openrouter_embedding_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embedding용 openrouter api key가 없으면 오류가 잘 나오는지 확인한다."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTER_EMBEDDING_API_KEY", raising=False)
+    monkeypatch.setattr(recommendation, "OpenAI", lambda api_key, base_url=None: FakeOpenAI())
     response = TestClient(main.app).post("/v1/chat/messages", json=request_body("안녕"))
 
     assert response.status_code == 503
