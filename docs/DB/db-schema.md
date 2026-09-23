@@ -154,7 +154,7 @@ iTunes가 붙인 라벨이며 일관성이 없다. 한국 곡 대부분이 `K-Po
 1. ~~CLAP 텍스트 인코더를 API 서버에 직접 넣는다~~ (미채택)
 2. **오디오/텍스트를 함께 받는 외부 임베딩 API를 쓴다** — `gemini-embedding-2` 채택
 
-`gemini-embedding-2`는 오디오(30초 미리듣기)와 텍스트가 같은 벡터 공간에 놓이고 다국어를 지원해서, 한국어 질의 원문을 변환 없이 그대로 임베딩해도 검색이 된다(기존엔 CLAP이 영어 전용이라 "한국어 → 영어 소리 서술" LLM 변환 단계가 필수였는데, 이 단계가 없어졌다). API 서버는 `google-genai` SDK로 `embed_content` 호출 한 번만 하면 되므로, 우려했던 `torch`/`laion-clap` 등 무거운 ML 라이브러리를 API 이미지에 넣을 필요가 없어졌다 — `worker` 그룹 분리 구성을 그대로 유지할 수 있다.
+`gemini-embedding-2`는 오디오(30초 미리듣기)와 텍스트가 같은 벡터 공간에 놓이고 다국어를 지원해서, 한국어 질의 원문을 변환 없이 그대로 임베딩해도 검색이 된다(기존엔 CLAP이 영어 전용이라 "한국어 → 영어 소리 서술" LLM 변환 단계가 필수였는데, 이 단계가 없어졌다). API 서버는 LLM·STT와 함께 OpenRouter를 경유해 `openai` SDK로 `embeddings.create` 호출 한 번만 하면 되므로(구글 `google-genai` SDK 직접 호출은 걷어냈다), 우려했던 `torch`/`laion-clap` 등 무거운 ML 라이브러리를 API 이미지에 넣을 필요가 없어졌다 — `worker` 그룹 분리 구성을 그대로 유지할 수 있다.
 
 CLAP(`emb_clap`, `batch/embedder.py`)은 폐기되지 않았다 — `mood_tags`(분위기 태그)를 뽑는 EffNet 백본이 여기 있어서, 신곡이 들어올 때 태그를 채우는 배치가 여전히 이 경로를 쓴다. 다만 검색(`db/search.py`)은 더 이상 `emb_clap`을 보지 않는다.
 

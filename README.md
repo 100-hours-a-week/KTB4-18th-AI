@@ -15,7 +15,27 @@ uv sync --locked
 
 환경변수가 필요하면 `.env.example`을 `.env`로 복사하고 개인 API 키를 입력합니다.
 예시의 모델·외부 API·타임아웃 설정은 로컬 실험용이며 팀의 확정 설정이 아닙니다.
-현재 공유 범위는 의존성·문서·협업 템플릿이며 서비스 구현 코드는 포함하지 않습니다.
+음성 전사 실행 방법과 API 계약은 [STT API 안내](docs/api/stt.md)를 참고합니다.
+
+모델 API는 OpenRouter를 사용하며 기능별 키에 각각 비용 한도를 설정합니다.
+
+| 기능 | 키 환경변수 | 모델 |
+| --- | --- | --- |
+| 추천 답변·이유 | `OPENROUTER_LLM_API_KEY` | `LLM_MODEL` |
+| 음성 전사 | `OPENROUTER_STT_API_KEY` | `openai/whisper-large-v3-turbo` 고정 |
+| 검색 임베딩 | `OPENROUTER_EMBEDDING_API_KEY` | `EMBEDDING_MODEL=google/gemini-embedding-2`, 3072차원 |
+
+기존 `.env`의 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`는 사용하지 않습니다.
+새 키는 로컬 `.env`와 배포 비밀값 저장소에 각각 설정합니다. 모델명에는 `openai/`, `google/` 접두사가 필요합니다.
+LLM과 임베딩 SDK의 자동 재시도는 중복 과금을 피하기 위해 끕니다.
+임베딩 전환 후 기존 DB 벡터와의 검색 결과를 검증해야 합니다. 현재 배치의 CLAP은 로컬 모델이며,
+팀원이 별도로 실행하는 Gemini 음성 적재 코드는 이 저장소에 없으므로 별도 전환이 필요합니다.
+
+현재 채팅은 LangGraph에서 의도를 분류한 뒤 추천 요청만 임베딩·DB 검색·추천 이유 생성으로 연결합니다.
+그 외 요청은 임시 안내문과 빈 곡 목록을 반환하며, STT는 별도 API로 유지합니다.
+사용자 메시지는 `thread_id`별 서버 메모리에 누적됩니다. 재시작 시 사라지고 여러 워커 간에 공유되지 않으며,
+기록 삭제·상한과 이전 추천곡을 활용한 후속 대화는 아직 구현되지 않았습니다.
+배포 전 QA에서 실제 OpenRouter·DB 연결, 브라우저 녹음, 대화 상태 처리와 오류 대응을 확인합니다.
 
 
 ## 협업 원칙

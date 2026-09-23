@@ -131,7 +131,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">FastAPI 로컬 테스트 · 텍스트 API 수동 테스트</div></div></div>
+      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">FastAPI 로컬 테스트 · 텍스트 · STT API 수동 테스트</div></div></div>
       <div class="topright"><span class="pill env">로컬 개발</span><span class="pill"><span class="dot" id="connDot"></span><span class="mono" id="connText">대기 중</span></span></div>
     </header>
     <div class="body">
@@ -140,22 +140,23 @@
         <section class="msgscroll" id="msgScroll" aria-live="polite"></section>
         <div class="composer">
           <div class="chips" id="chips"></div>
+          <div id="sttStatus" class="hint" role="status" aria-live="polite">마이크 버튼을 눌러 녹음하세요. 전사문을 확인한 뒤 전송할 수 있습니다.</div>
           <div class="inputrow">
             <button class="iconbtn ghost" id="photoBtn" type="button" title="풍경 사진 첨부 (멀티모달 예정)">▣</button>
             <input class="textfield" id="input" type="text" maxlength="200" placeholder="메시지를 입력하세요…" autocomplete="off">
             <button class="iconbtn" id="voiceBtn" type="button" title="음성(STT) 입력">≋</button>
             <button class="iconbtn" id="sendBtn" type="button" title="전송 (Enter)">↑</button>
           </div>
-          <div class="hint"><b>Enter</b>로 전송 · 음성 인식 결과는 텍스트로 전송 · 사진 입력은 멀티모달 API 연동 예정</div>
+          <div class="hint"><b>Enter</b>로 전송 · 전사문을 확인·수정한 뒤 직접 전송 · 사진 입력은 멀티모달 API 연동 예정</div>
         </div>
       </main>
       <aside class="inspane">
-        <div class="insphead"><div class="t">인스펙터</div><div class="s">마지막 <b class="mono">POST /v1/chat/messages</b> 요청·응답</div></div>
+        <div class="insphead"><div class="t">인스펙터</div><div class="s">마지막 <b class="mono" id="lastEndpoint">POST /v1/chat/messages</b> 요청·응답</div></div>
         <div class="inspbody">
-          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> /v1/chat/messages</span></div><div class="kv"><span class="k">응답 방식</span><span class="v">text/event-stream</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
+          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono" id="endpointName">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> <span id="endpointPath">/v1/chat/messages</span></span></div><div class="kv"><span class="k">응답 방식</span><span class="v" id="responseType">text/event-stream</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
           <div class="blocktitle"><span class="bt">요청 본문 (Request)</span></div><pre class="jsonpre" id="reqBox"><span class="placeholder">아직 보낸 요청이 없습니다.</span></pre>
           <div class="blocktitle"><span class="bt">응답 본문 (Response)</span><span class="mono" id="respMini" style="font-size:11px;color:#9a9ca3"></span></div><pre class="jsonpre" id="resBox"><span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span></pre>
-          <section class="sect"><button class="secthead" id="schemaHead" type="button"><span class="st">요청 · 응답 스키마</span><span class="chev open" id="schemaChev">⌄</span></button><div class="schtable" id="schemaBody"><div class="schcap">ChatRequest — 요청</div><div class="schrow"><span class="f mono">thread_id</span><span class="ty mono">UUID</span><span class="rule">채팅 세션 동안 유지</span></div><div class="schrow"><span class="f mono">request_id</span><span class="ty mono">UUID</span><span class="rule">요청마다 새로 발급</span></div><div class="schrow"><span class="f mono">message</span><span class="ty mono">string</span><span class="rule">필수 · 공백 불가 · ≤ 200자</span></div><div class="schcap" style="margin-top:6px">SSE — 응답</div><div class="schrow"><span class="f mono">text</span><span class="ty mono">delta</span><span class="rule">OpenAI 한국어 텍스트 조각</span></div><div class="schrow"><span class="f mono">tracks</span><span class="ty mono">array</span><span class="rule">iTunes 미리듣기 곡 목록</span></div></div></section>
+          <section class="sect"><button class="secthead" id="schemaHead" type="button"><span class="st">요청 · 응답 스키마</span><span class="chev open" id="schemaChev">⌄</span></button><div class="schtable" id="schemaBody"><div class="schcap">STT — 요청 · 응답</div><div class="schrow"><span class="f mono">audio</span><span class="ty mono">file</span><span class="rule">multipart · 60초 · 10 MiB 이하</span></div><div class="schrow"><span class="f mono">transcript</span><span class="ty mono">string</span><span class="rule">사용자 확인 후 전송할 전사 초안</span></div><div class="schcap">ChatRequest — 요청</div><div class="schrow"><span class="f mono">thread_id</span><span class="ty mono">UUID</span><span class="rule">채팅 세션 동안 유지</span></div><div class="schrow"><span class="f mono">request_id</span><span class="ty mono">UUID</span><span class="rule">요청마다 새로 발급</span></div><div class="schrow"><span class="f mono">message</span><span class="ty mono">string</span><span class="rule">필수 · 공백 불가 · ≤ 200자</span></div><div class="schcap" style="margin-top:6px">SSE — 응답</div><div class="schrow"><span class="f mono">text</span><span class="ty mono">delta</span><span class="rule">OpenAI 한국어 텍스트 조각</span></div><div class="schrow"><span class="f mono">tracks</span><span class="ty mono">array</span><span class="rule">iTunes 미리듣기 곡 목록</span></div></div></section>
           <section class="sect"><div class="secthead static"><span class="st">호출 로그</span></div><div class="schtable" id="logBody"><div class="empty">아직 호출 기록이 없습니다.</div></div></section>
         </div>
       </aside>
@@ -164,7 +165,8 @@
   <script>
     "use strict";
     const CHAT_URL = "/v1/chat/messages";
-    const state = { source: "text", photoAttached: false, recording: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
+    const STT_URL = "/v1/transcriptions";
+    const state = { source: "text", photoAttached: false, recording: false, busy: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
     const $ = (id) => document.getElementById(id);
     const scroll = $("msgScroll");
 
@@ -181,11 +183,33 @@
     function setStatus(kind, code, text, latency) { const badge = $("statusBadge"); if (kind === "idle") { badge.className = "statusbadge"; badge.textContent = "대기 중"; $("latText").textContent = "—"; $("respMini").textContent = ""; return; } badge.className = kind === "ok" ? "statusbadge ok" : "statusbadge err"; badge.textContent = `${code} ${text}`; $("latText").textContent = latency == null ? "—" : `${latency}ms`; $("respMini").textContent = code; }
     function setReqBox(value) { $("reqBox").innerHTML = jsonHtml(value); }
     function setResBox(value, error) { const box = $("resBox"); box.className = error ? "jsonpre err" : "jsonpre"; box.innerHTML = jsonHtml(value); }
-    function pushLog(status) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">/v1/chat/messages</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
-    function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>듣고 있어요… 말이 끝나면 자동 전송돼요<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">음성 인식 결과도 텍스트로 전송됩니다<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진 입력은 준비 중입니다 <span class="tag-plan">멀티모달 예정</span><span class="x" data-act="removePhoto">×</span></span>'; $("chips").innerHTML = html; }
-    function refreshControls() { $("voiceBtn").className = "iconbtn" + (state.recording ? " rec" : state.source === "voice" ? " on" : ""); $("photoBtn").className = "iconbtn ghost" + (state.photoAttached ? " on" : ""); }
+    function pushLog(status, path = CHAT_URL) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, path, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">${esc(item.path)}</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
+    function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>녹음 중 · 최대 60초 · 종료하면 전사 요청<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">전사문을 확인·수정한 뒤 전송하세요<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진 입력은 준비 중입니다 <span class="tag-plan">멀티모달 예정</span><span class="x" data-act="removePhoto">×</span></span>'; $("chips").innerHTML = html; }
+    function refreshControls() {
+      for (const id of ["sendBtn", "input", "photoBtn", "resetBtn"]) $(id).disabled = state.busy || state.recording;
+      $("voiceBtn").disabled = state.busy;
+      $("voiceBtn").textContent = state.recording ? "■" : "≋";
+      $("voiceBtn").title = state.recording ? "녹음 종료 후 전사" : "마이크 녹음 시작";
+      $("voiceBtn").setAttribute("aria-label", $("voiceBtn").title);
+      $("voiceBtn").setAttribute("aria-pressed", String(state.recording)); $("voiceBtn").className = "iconbtn" + (state.recording ? " rec" : state.source === "voice" ? " on" : ""); $("photoBtn").className = "iconbtn ghost" + (state.photoAttached ? " on" : ""); }
 
+    function showEndpoint(path) {
+      $("lastEndpoint").textContent = "POST " + path;
+      $("endpointName").textContent = path;
+      $("endpointPath").textContent = path;
+      $("responseType").textContent = path === STT_URL ? "application/json" : "text/event-stream";
+    }
     async function send() {
+      if (state.busy || state.recording) return;
+      if ([...$("input").value.trim()].length > 200) {
+        $("sttStatus").textContent = "전사문을 200자 이하로 수정한 뒤 전송하세요.";
+        return;
+      }
+      state.busy = true; refreshControls();
+      try { await sendChat(); } finally { state.busy = false; refreshControls(); }
+    }
+    async function sendChat() {
+      showEndpoint(CHAT_URL);
       const input = $("input");
       const raw = input.value.trim();
       if (!raw) return;
@@ -266,17 +290,114 @@
       audio.play().catch(() => { button.textContent = "재생 실패"; button.classList.remove("playing"); playingAudio = null; playingButton = null; });
     });
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognizer = null;
-    function stopRecording(autoSend = true) { if (recognizer) { try { recognizer.stop(); } catch {} } state.recording = false; if (!autoSend) { renderChips(); refreshControls(); } }
-    function startRecording() { if (!SpeechRecognition) { state.source = "voice"; renderChips(); refreshControls(); $("input").placeholder = "음성 인식 미지원 브라우저입니다. 텍스트로 입력해 주세요."; $("input").focus(); return; } recognizer = new SpeechRecognition(); recognizer.lang = "ko-KR"; recognizer.interimResults = true; state.recording = true; state.source = "voice"; renderChips(); refreshControls(); recognizer.onresult = (event) => { let text = ""; for (const result of event.results) text += result[0].transcript; $("input").value = text; }; recognizer.onerror = () => stopRecording(false); recognizer.onend = () => { const hasText = $("input").value.trim().length > 0; state.recording = false; renderChips(); refreshControls(); if (hasText) send(); }; recognizer.start(); }
+    let recorder = null;
+    let microphone = null;
+    let recordingTimer = null;
+    let leaving = false;
+    function releaseMicrophone() {
+      clearTimeout(recordingTimer);
+      microphone?.getTracks().forEach(track => track.stop());
+      microphone = null;
+      recorder = null;
+      state.recording = false;
+      renderChips(); refreshControls();
+    }
+    async function transcribe(blob, filename) {
+      if (state.busy || state.recording) return;
+      if (!blob?.size || blob.size > 10 * 1024 * 1024) {
+        $("sttStatus").textContent = "녹음 데이터가 없거나 10 MiB를 초과했습니다. 다시 녹음해 주세요.";
+        return;
+      }
+      state.busy = true; refreshControls();
+      showEndpoint(STT_URL);
+      const form = new FormData();
+      form.append("audio", blob, filename);
+      setReqBox({ audio: { filename, content_type: blob.type, bytes: blob.size }, encoding: "multipart/form-data" });
+      $("sttStatus").textContent = "전사 중…";
+      setConnection("", "전사 중"); setStatus("idle");
+      const started = performance.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60000);
+      try {
+        const response = await fetch(STT_URL, { method: "POST", body: form, signal: controller.signal });
+        let data;
+        try { data = await response.json(); } catch { data = { message: "서버 응답이 JSON이 아닙니다." }; }
+        const valid = response.ok && typeof data.transcript === "string" && data.transcript.trim();
+        setStatus(valid ? "ok" : "err", response.status, valid ? "OK" : "Error", Math.round(performance.now() - started));
+        setResBox(data, !valid); pushLog(response.status, STT_URL);
+        if (!valid) {
+          const reason = data.details?.reason;
+          $("sttStatus").textContent = `${response.status}: ${data.message || "유효한 전사문이 없습니다."}${reason ? " (" + reason + ")" : ""}` +
+            (response.status === 503 ? " 서버의 OPENROUTER_STT_API_KEY, 사용 한도 및 제공자 상태를 확인하세요." : "");
+          setConnection("err", "전사 실패");
+          return;
+        }
+        $("input").value = data.transcript;
+        state.source = "voice"; renderChips();
+        $("sttStatus").textContent = [...data.transcript].length > 200
+          ? "전사 완료 · 200자 이하로 수정한 뒤 전송하세요."
+          : "전사 완료 · 입력창에서 확인·수정한 뒤 전송하세요.";
+        setConnection("ok", "전사 완료");
+      } catch (error) {
+        const message = error.name === "AbortError" ? "전사 대기 시간이 초과됐습니다. 서버 처리는 계속될 수 있습니다." : "서버에 연결하지 못했습니다.";
+        $("sttStatus").textContent = message;
+        setConnection("err", "전사 실패"); setStatus("err", "ERR", "Network", Math.round(performance.now() - started));
+        setResBox({ message }, true); pushLog("ERR", STT_URL);
+      } finally {
+        clearTimeout(timer); state.busy = false; refreshControls(); $("input").focus();
+      }
+    }
+    function stopRecording() {
+      if (recorder?.state === "recording") recorder.stop();
+    }
+    async function startRecording() {
+      if (state.busy || state.recording) return;
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        $("sttStatus").textContent = "마이크 녹음은 HTTPS 또는 localhost의 지원 브라우저에서 사용하세요.";
+        return;
+      }
+      state.busy = true; refreshControls();
+      $("sttStatus").textContent = "마이크 권한 확인 중…";
+      try {
+        microphone = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (leaving) { releaseMicrophone(); return; }
+        const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"].find(type => MediaRecorder.isTypeSupported(type));
+        const active = new MediaRecorder(microphone, mime ? { mimeType: mime } : {});
+        recorder = active;
+        const chunks = [];
+        let failed = false;
+        active.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+        active.onerror = () => { failed = true; releaseMicrophone(); $("sttStatus").textContent = "녹음에 실패했습니다. 다시 시도하세요."; };
+        active.onstop = () => {
+          const type = active.mimeType || mime || "";
+          const blob = new Blob(chunks, { type });
+          releaseMicrophone();
+          if (failed || leaving) return;
+          const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+          transcribe(blob, "recording." + ext);
+        };
+        active.start(); state.recording = true;
+        $("sttStatus").textContent = "녹음 중 · 마이크 버튼을 다시 누르면 종료합니다. 최대 60초.";
+        recordingTimer = setTimeout(stopRecording, 60000);
+      } catch (error) {
+        releaseMicrophone();
+        $("sttStatus").textContent = error.name === "NotAllowedError" ? "마이크 권한이 거부되었습니다. 브라우저 권한을 확인하세요." : "마이크를 사용할 수 없습니다.";
+      } finally { state.busy = false; renderChips(); refreshControls(); }
+    }
+    window.addEventListener("pagehide", () => { leaving = true; stopRecording(); releaseMicrophone(); });
+    window.addEventListener("pageshow", () => { leaving = false; });
     $("sendBtn").addEventListener("click", () => { if (!state.recording) send(); });
     $("input").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); if (!state.recording) send(); } });
-    $("voiceBtn").addEventListener("click", () => { if (state.recording) { stopRecording(true); return; } if (state.source === "voice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; renderChips(); refreshControls(); return; } startRecording(); });
+    $("voiceBtn").addEventListener("click", () => { if (state.recording) stopRecording(); else startRecording(); });
     $("photoBtn").addEventListener("click", () => { state.photoAttached = !state.photoAttached; renderChips(); refreshControls(); });
     $("chips").addEventListener("click", (event) => { const action = event.target.closest("[data-act]")?.dataset.act; if (action === "cancelVoice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; } if (action === "removePhoto") state.photoAttached = false; if (action === "stopRec") stopRecording(false); renderChips(); refreshControls(); });
     $("schemaHead").addEventListener("click", () => { state.schemaOpen = !state.schemaOpen; $("schemaBody").style.display = state.schemaOpen ? "" : "none"; $("schemaChev").className = "chev" + (state.schemaOpen ? " open" : ""); });
-    function resetAll() { scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.source = "text"; state.photoAttached = false; state.recording = false; state.threadId = crypto.randomUUID(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
+    function resetAll() {
+      if (state.busy || state.recording) return;
+      $("input").value = "";
+      $("sttStatus").textContent = "마이크 버튼을 눌러 녹음하세요. 전사문을 확인한 뒤 전송할 수 있습니다.";
+      showEndpoint(CHAT_URL); setConnection("", "대기 중");
+      scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.source = "text"; state.photoAttached = false; state.recording = false; state.threadId = crypto.randomUUID(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
     $("resetBtn").addEventListener("click", resetAll);
     resetAll();
   </script>
