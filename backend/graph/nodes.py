@@ -31,9 +31,11 @@ def embed_node(state: RecommendationState) -> dict:
 
 def search_node(state: RecommendationState) -> dict:
     """query_vector로 pgvector 검색을 수행해 후보 곡과 무드 태그를 가져온다."""
-
-    tracks, mood_tags = vector_recommendation(state["query_vector"], state["message"])
-    return {"tracks": tracks, "mood_tags": mood_tags}
+    exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
+    tracks, mood_tags = vector_recommendation(
+        state["query_vector"], state["message"], exclude_ids=exclude_ids,
+    )
+    return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
 
 
 def reason_node(state: RecommendationState, config: RunnableConfig) -> dict:

@@ -5,6 +5,8 @@ from typing import Annotated, TypedDict
 
 from backend.schemas import Track, UserContext
 
+def _cap_shown_ids(old: list[str], new: list[str]) -> list[str]:
+    return (old + new)[-100:]
 
 class RecommendationState(TypedDict, total=False):
     """음악 추천 파이프라인의 상태."""
@@ -28,3 +30,4 @@ class RecommendationState(TypedDict, total=False):
     # ── search_node가 채움 ──
     tracks: list[Track]
     mood_tags: dict[str, dict]
+    shown_track_ids: Annotated[list[str], _cap_shown_ids]

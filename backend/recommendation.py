@@ -231,6 +231,7 @@ def embed_query(client: OpenAI, message: str) -> list[float]:
 def vector_recommendation(
     qvec: list[float],
     message: str,
+    exclude_ids: set[int] = None,
 ) -> tuple[list[Track], dict[str, dict]]:
     """pgvector 검색 결과의 추천곡과 무드 태그를 가져온다."""
 
@@ -241,7 +242,7 @@ def vector_recommendation(
         from db.search import search as vector_search
 
         with SessionLocal() as session:
-            tracks, mood_tags_by_id = vector_search(session, qvec, message)
+            tracks, mood_tags_by_id = vector_search(session, qvec, message, exclude_ids=exclude_ids)
     except Exception as error:
         raise _catalog_unavailable() from error
 
