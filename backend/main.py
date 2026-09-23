@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.recommendation import prepare_recommendation, sse, stream_answer
+from backend.recommendation import _catalog_unavailable, prepare_recommendation, sse, stream_answer
 from backend.schemas import ChatRequest, ErrorResponse, HealthResponse, TranscriptionResponse
 from backend.transcriptions import transcribe_audio
 
@@ -25,6 +25,30 @@ app = FastAPI(title="머문음 AI 채팅", version="0.2.0")
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
     """AI 서버 실행 상태를 반환함(Health Check)."""
+
+    return HealthResponse(status="ok")
+
+
+@app.get(
+    "/health/ready",
+    response_model=HealthResponse,
+    responses={503: {"model": ErrorResponse, "description": "DB 연결 불가"}},
+    tags=["health"],
+)
+def readiness() -> HealthResponse:
+    """DB(pgvector) 연결까지 확인하는 readiness 엔드포인트."""
+
+    try:
+        # NOTE: main.py의 load_dotenv()보다 먼저 실행되면 db.models가 읽는
+        # DATABASE_URL이 아직 없을 수 있어, 요청 처리 시점까지 import를 늦춘다.
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+    except Exception as error:
+        raise _catalog_unavailable() from error
 
     return HealthResponse(status="ok")
 
