@@ -203,6 +203,49 @@ def test_health_does_not_call_external_services() -> None:
     assert response.json() == {"status": "ok"}
 
 
+class FakeSession:
+    """SessionLocal()이 반환하는 세션의 context manager 프로토콜을 흉내낸다."""
+
+    def __init__(self, on_execute) -> None:
+        self._on_execute = on_execute
+
+    def __enter__(self) -> "FakeSession":
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+    def execute(self, *args: object, **kwargs: object) -> None:
+        self._on_execute()
+
+
+def test_readiness_returns_ok_when_db_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DB에 SELECT 1이 성공하면 readiness가 ok를 반환하는지 확인한다."""
+    from db import models as db_models
+
+    monkeypatch.setattr(db_models, "SessionLocal", lambda: FakeSession(lambda: None))
+
+    response = TestClient(main.app).get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_readiness_returns_503_when_db_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DB 연결이 실패하면 readiness가 503을 반환하는지 확인한다."""
+    from db import models as db_models
+
+    def failing_execute() -> None:
+        raise RuntimeError("DB connection failed")
+
+    monkeypatch.setattr(db_models, "SessionLocal", lambda: FakeSession(failing_execute))
+
+    response = TestClient(main.app).get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["details"]["reason"] == "MUSIC_CATALOG_UNAVAILABLE"
+
+
 @pytest.mark.parametrize("intent", ["guide", "clarify", "lookup", "out_of_scope"])
 def test_non_recommendation_skips_search(client, monkeypatch, intent):
     test_client, fake_openai = client
