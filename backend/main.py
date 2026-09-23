@@ -1,5 +1,6 @@
 """Spring Backend용 V1 API와 로컬 테스트 UI를 제공하는 FastAPI 서버."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.recommendation import prepare_recommendation, stream_answer
+from backend.recommendation import prepare_recommendation, sse, stream_answer
 from backend.schemas import ChatRequest, ErrorResponse, HealthResponse, TranscriptionResponse
 from backend.transcriptions import transcribe_audio
 
@@ -47,8 +48,25 @@ def health() -> HealthResponse:
 def chat(body: ChatRequest) -> StreamingResponse:
     """추천 문장과 완성된 곡 목록을 Spring Backend에 SSE로 반환한다."""
 
-    # TODO: request_id 중복 처리와 thread_id 대화 맥락은 책임 범위 확정 후 연결한다.
-    client, tracks = prepare_recommendation(body.message)
+    # TODO: request_id 중복 처리는 책임 범위 확정 후 연결한다.
+    # thread_id는 LangGraph checkpointer의 대화 세션 키로 흘려보낸다.
+    result = prepare_recommendation(body.message, str(body.thread_id))
+
+    # NOTE: 추천이 아니면 단순 str로 받으니 이렇게 처리한다.
+    if isinstance(result, str):
+        # TODO: guide/clarify/lookup 분기가 생기기 전까지의 임시 처리.
+        def temporary_answer() -> Iterator[str]:
+            yield sse("text", {"delta": result})
+            yield sse("tracks", {"tracks": []})
+            yield sse("done", {})
+
+        return StreamingResponse(
+            temporary_answer(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    client, tracks = result
     return StreamingResponse(
         stream_answer(client, body.message, tracks, body.user_context),
         media_type="text/event-stream",

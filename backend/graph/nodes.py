@@ -2,13 +2,23 @@
 각 노드는 기존 로직을 그대로 호출하는 얇은 wrapper다.
 """
 
+from langchain_core.runnables import RunnableConfig
+
 from backend.graph.state import RecommendationState
 from backend.recommendation import (
     assign_reasons,
+    classify_intent,
     embed_query,
     get_genai_client,
     vector_recommendation,
 )
+
+
+def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
+    """대화 기록을 참고해 사용자 메시지의 의도를 분류한다."""
+
+    intent = classify_intent(config["configurable"]["client"], state["messages"])
+    return {"intent": intent}
 
 
 def embed_node(state: RecommendationState) -> dict:
@@ -26,11 +36,11 @@ def search_node(state: RecommendationState) -> dict:
     return {"tracks": tracks, "mood_tags": mood_tags}
 
 
-def reason_node(state: RecommendationState) -> dict:
+def reason_node(state: RecommendationState, config: RunnableConfig) -> dict:
     """검색된 곡마다 추천 이유를 채운다."""
 
     tracks = state["tracks"]
-    assign_reasons(state["client"], state["message"], tracks, state["mood_tags"])
+    assign_reasons(config["configurable"]["client"], state["message"], tracks, state["mood_tags"])
     return {"tracks": tracks}
 
 

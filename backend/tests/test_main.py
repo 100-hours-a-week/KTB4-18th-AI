@@ -87,7 +87,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.6-luna")
     monkeypatch.setattr(recommendation, "OpenAI", lambda api_key: fake_openai)
 
-    # embed_node/search_node는 각각 Gemini 임베딩 API와 PostgreSQL(pgvector) 조회라는
+    # NOTE: classify_node는 OpenAI 구조화 출력으로 intent를 뽑는데, 여기 fixture의
+    # FakeOpenAI는 이유 생성용 JSON만 흉내내므로 intent 분류는 목으로 고정해
+    # recommend 경로를 계속 타게 한다.
+    monkeypatch.setattr(nodes, "classify_intent", lambda client, message: "recommend")
+
+    # NOTE: embed_node/search_node는 각각 Gemini 임베딩 API와 PostgreSQL(pgvector) 조회라는
     # 외부 I/O 경계이므로, 그 경계에서 가짜 값을 주입해 그래프 배선(embed → search →
     # reason)은 실제 코드로 검증한다.
     monkeypatch.setattr(nodes, "get_genai_client", lambda: object())
@@ -194,6 +199,13 @@ def test_health_does_not_call_external_services() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+# TODO: classify 분기 자체를 검증하는 테스트가 없다.
+# - classify_intent가 "recommend"가 아닌 값을 반환하면 embed/search/reason이
+#   전혀 호출되지 않는지 (예: nodes.embed_query가 안 불렸는지 monkeypatch로 확인)
+# - 그 경우 main.py가 prepare_recommendation의 문자열 반환을 SSE(text/tracks/done)로
+#   잘 감싸서 200으로 내려주는지
 
 
 def test_local_chat_page_uses_v1_fields() -> None:

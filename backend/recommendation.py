@@ -92,8 +92,82 @@ def _catalog_unavailable() -> HTTPException:
 #         raise _model_unavailable()
 #     return description
 
-def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
-    """OpenAI client를 준비하고 추천 그래프를 실행해 검증된 추천곡을 얻는다."""
+def classify_instructions() -> str:
+    """사용자 메시지의 의도를 분류하기 위한 지시를 반환한다."""
+
+    # TODO: 프롬프트 추가 수정 필요
+    return (
+        "사용자의 음악 챗봇 메시지를 아래 의도 중 하나로 분류하세요.\n\n"
+        "- recommend: 음악·곡 추천을 원하는 요청\n"
+        "- guide: 챗봇 사용법이나 지원 범위를 묻는 질문\n"
+        "- clarify: 무엇을 원하는지 불명확해 되물어야 하는 경우\n"
+        "- lookup: 특정 곡·아티스트 정보를 조회해달라는 요청\n"
+        "- out_of_scope: 음악 추천·조회와 무관한 요청\n\n"
+        "conversation 필드는 이 대화방의 메시지를 오래된 순서로 담고 있고, "
+        "마지막 항목이 이번에 분류할 요청입니다. 앞의 메시지들은 '이 곡과 "
+        "비슷한 노래' 같은 지시어를 이해하기 위한 맥락으로만 참고하세요.\n\n"
+        "가장 적절한 의도 하나만 고르세요."
+    )
+
+
+def classify_intent(client: OpenAI, messages: list[str]) -> str:
+    """대화 기록을 참고해 사용자 메시지를 다섯 가지 의도 중 하나로 분류한다.
+    일단은 intent만 뽑지만, 나중에 여러 필드값 내게도 스키마 넓힐 수 있겠다.
+
+    TODO: 지금은 recommend/guide/clarify/lookup/out_of_scope 다섯 개로만
+    나누는데, recommend로 분류되더라도 "이 아티스트 신곡만" 처럼 우리가
+    지원 못 하는 필수 조건을 요구하는 경우를 구분 못 한다. 이런 조건까지
+    구분하려면 intent 하나로는 부족하고, 조건을 같이 추출하는 필드나
+    별도 판단 단계가 필요할 것.
+    """
+
+    try:
+        response = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            instructions=classify_instructions(),
+            input=json.dumps({"conversation": messages}, ensure_ascii=False),
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "intent_classification",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "intent": {
+                                "type": "string",
+                                "enum": [
+                                    "recommend",
+                                    "guide",
+                                    "clarify",
+                                    "lookup",
+                                    "out_of_scope",
+                                ],
+                            }
+                        },
+                        "required": ["intent"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                }
+            },
+        )
+        data = json.loads(response.output_text or "{}")
+    except Exception as error:
+        raise _model_unavailable() from error
+
+    intent = data.get("intent")
+    if intent not in ("recommend", "guide", "clarify", "lookup", "out_of_scope"):
+        raise _model_unavailable()
+    return intent
+
+
+def prepare_recommendation(message: str, thread_id: str) -> tuple[OpenAI, list[Track]] | str:
+    """OpenAI client를 준비하고 추천 그래프를 실행한다.
+
+    NOTE: intent가 "recommend"가 아니면 (client, tracks) 대신 바로 내려줄
+    안내 문자열을 반환하기로 일단 정했다. guide/clarify/lookup 노드가 실제로
+    생기면 각 분기의 진짜 응답으로 교체할 것.
+    """
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -104,7 +178,14 @@ def prepare_recommendation(message: str) -> tuple[OpenAI, list[Track]]:
     # 순환 import를 피하려고 그래프 모듈은 호출 시점에 import한다.
     from backend.graph.graph import build_graph
 
-    result = build_graph().invoke({"message": message, "client": client})
+    result = build_graph().invoke(
+        {"message": message, "messages": [message]},
+        config={"configurable": {"thread_id": thread_id, "client": client}},
+    )
+
+    if result["intent"] != "recommend":
+        # TODO: guide/clarify/lookup 분기가 생기기 전까지의 임시 응답.
+        return "죄송해요, 아직 지원하지 않는 요청이에요."
 
     return client, result["tracks"]
 
