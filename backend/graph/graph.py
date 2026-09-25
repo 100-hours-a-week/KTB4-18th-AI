@@ -6,7 +6,13 @@
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from backend.graph.nodes import classify_node, embed_node, reason_node, search_node
+from backend.graph.nodes import (
+    classify_node,
+    embed_node,
+    lookup_node,
+    reason_node,
+    search_node,
+)
 from backend.graph.state import RecommendationState
 
 # NOTE: 채팅방을 나가면 대화 기억도 사라져도 되는 요구사항(장기 저장 불필요)이라
@@ -20,20 +26,27 @@ _checkpointer = InMemorySaver()
 
 
 def route_by_intent(state: RecommendationState) -> str:
-    """classify_node가 채운 intent에 따라 다음 노드를 정한다."""
+    """classify_node가 채운 intent·조건 필드에 따라 다음 노드를 정한다.
 
-    # TODO: guide/clarify/lookup 분기가 생기면 각자의 노드로 연결한다.
-    # 지금은 recommend가 아니면 바로 끝낸다.
+    guide/clarify/out_of_scope와, recommend인데 지원 불가능한 조건·정보 부족인
+    경우는 더 할 DB 작업이 없으므로 그래프를 바로 끝낸다. prepare_recommendation이
+    intent와 각 필드를 보고 어떤 고정/생성 안내를 내려줄지 결정한다.
+    """
 
-    if state["intent"] == "recommend":
+    intent = state["intent"]
+    if intent == "recommend":
+        if state["recommend_unsupported_condition"] or not state["recommend_has_enough_info"]:
+            return END
         return "embed"
+    if intent == "lookup":
+        return "lookup"
     return END
 
 
 def build_graph():
     """RecommendationState 기반 StateGraph를 구성해 컴파일한다.
-
-    최종 답변 생성(SSE 스트리밍, stream_answer)은 그래프 밖에서 그대로 처리한다.
+    최종 답변 생성(SSE 스트리밍, stream_answer/stream_lookup_answer)은 그래프
+    밖에서 그대로 처리한다.
     """
 
     graph = StateGraph(RecommendationState)
@@ -42,18 +55,18 @@ def build_graph():
     graph.add_node("embed", embed_node)
     graph.add_node("search", search_node)
     graph.add_node("reason", reason_node)
+    graph.add_node("lookup", lookup_node)
 
     graph.add_edge(START, "classify")
-    graph.add_conditional_edges("classify", route_by_intent, {"embed": "embed", END: END})
+    graph.add_conditional_edges(
+        "classify", route_by_intent, {"embed": "embed", "lookup": "lookup", END: END},
+    )
     graph.add_edge("embed", "search")
     graph.add_edge("search", "reason")
     graph.add_edge("reason", END)
+    graph.add_edge("lookup", END)
 
     # TODO: tracks가 비어있으면 reason을 건너뛰고 바로 END로 가는
     # 조건부 분기(add_conditional_edges)를 추가할지 검토.
-    # TODO: classify에서 recommend로 판단했더라도, embed 이후(예: search 결과가
-    # 없거나 사용자가 지원 불가능한 조건을 요구한 경우) guide/clarify 같은 다른
-    # 분기로 다시 튀어야 하는 경우가 있을 수 있다. 지금은 embed→search→reason이
-    # 한 번 들어가면 끝까지 직진하는 구조라 이런 재분기가 없다.
 
     return graph.compile(checkpointer=_checkpointer)

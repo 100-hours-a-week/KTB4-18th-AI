@@ -11,7 +11,13 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.readiness import database_is_ready
-from backend.recommendation import prepare_recommendation, sse, stream_answer
+from backend.recommendation import (
+    _catalog_unavailable,
+    prepare_recommendation,
+    sse,
+    stream_answer,
+    stream_lookup_answer,
+)
 from backend.schemas import ChatRequest, ErrorResponse, HealthResponse, TranscriptionResponse
 from backend.transcriptions import transcribe_audio
 
@@ -66,23 +72,28 @@ def chat(body: ChatRequest) -> StreamingResponse:
     # thread_id는 LangGraph checkpointer의 대화 세션 키로 흘려보낸다.
     result = prepare_recommendation(body.message, str(body.thread_id))
 
-    # NOTE: 추천이 아니면 단순 str로 받으니 이렇게 처리한다.
-    if isinstance(result, str):
-        # TODO: guide/clarify/lookup 분기가 생기기 전까지의 임시 처리.
-        def temporary_answer() -> Iterator[str]:
-            yield sse("text", {"delta": result})
+    # NOTE: guide/clarify/out_of_scope, recommend·lookup의 예외 분기는 고정 문구라 이렇게 처리한다.
+    if result.kind == "static":
+        def static_answer() -> Iterator[str]:
+            yield sse("text", {"delta": result.text})
             yield sse("tracks", {"tracks": []})
             yield sse("done", {})
 
         return StreamingResponse(
-            temporary_answer(),
+            static_answer(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    client, tracks = result
+    if result.kind == "lookup":
+        return StreamingResponse(
+            stream_lookup_answer(result.client, body.message, result.tracks),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return StreamingResponse(
-        stream_answer(client, body.message, tracks, body.user_context),
+        stream_answer(result.client, body.message, result.tracks, body.user_context),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

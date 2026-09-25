@@ -23,6 +23,12 @@ class RecommendationState(TypedDict, total=False):
 
     # ── classify_node가 채움 ──
     intent: str
+    recommend_has_enough_info: bool
+    recommend_unsupported_condition: bool
+    recommend_genres: list[str] | None
+    recommend_min_year: int | None
+    lookup_song: str | None
+    lookup_artist: str | None
 
     # ── embed_node가 채움 ──
     query_vector: list[float]
@@ -31,3 +37,7 @@ class RecommendationState(TypedDict, total=False):
     tracks: list[Track]
     mood_tags: dict[str, dict]
     shown_track_ids: Annotated[list[str], _cap_shown_ids]
+
+    # ── lookup_node가 채움 ──
+    lookup_status: str  # "found" | "ambiguous" | "not_found"
+    lookup_tracks: list[Track]
