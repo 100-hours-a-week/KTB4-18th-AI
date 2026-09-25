@@ -1,15 +1,17 @@
 """Spring Backend용 V1 API와 로컬 테스트 UI를 제공하는 FastAPI 서버."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.recommendation import prepare_recommendation, stream_answer
+from backend.readiness import database_is_ready
+from backend.recommendation import prepare_recommendation, sse, stream_answer
 from backend.schemas import ChatRequest, ErrorResponse, HealthResponse, TranscriptionResponse
 from backend.transcriptions import transcribe_audio
 
@@ -23,9 +25,22 @@ app = FastAPI(title="머문음 AI 채팅", version="0.2.0")
 # ===== API 엔드포인트 =====
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
-    """AI 서버 실행 상태를 반환함(Health Check)."""
+    """외부 의존성 확인 없이 서버 생존 여부를 반환한다."""
 
     return HealthResponse(status="ok")
+
+
+@app.get(
+    "/readiness",
+    response_model=HealthResponse,
+    responses={503: {"model": HealthResponse, "description": "DB 또는 추천 데이터 준비 안 됨"}},
+    tags=["health"],
+)
+def readiness(response: Response) -> HealthResponse:
+    """DB 연결과 추천 가능 곡 존재 여부를 확인해 배포 준비 상태를 반환한다."""
+    ready = database_is_ready()
+    response.status_code = 200 if ready else 503
+    return HealthResponse(status="ready" if ready else "not_ready")
 
 
 @app.post(
@@ -33,7 +48,7 @@ def health() -> HealthResponse:
     response_class=StreamingResponse,
     responses={
         200: {"content": {"text/event-stream": {}}},
-        422: {
+        400: {
             "model": ErrorResponse,
             "description": "요청값 검증 실패",
         },
@@ -47,11 +62,26 @@ def health() -> HealthResponse:
 def chat(body: ChatRequest) -> StreamingResponse:
     """추천 문장과 완성된 곡 목록을 Spring Backend에 SSE로 반환한다."""
 
-    # TODO: request_id 중복 처리와 thread_id 대화 맥락은 책임 범위 확정 후 연결한다.
-    # 되돌릴 때: client, search_context, tracks = prepare_recommendation(body.message)
-    client, tracks = prepare_recommendation(body.message)
+    # TODO: request_id 중복 처리는 책임 범위 확정 후 연결한다.
+    # thread_id는 LangGraph checkpointer의 대화 세션 키로 흘려보낸다.
+    result = prepare_recommendation(body.message, str(body.thread_id))
+
+    # NOTE: 추천이 아니면 단순 str로 받으니 이렇게 처리한다.
+    if isinstance(result, str):
+        # TODO: guide/clarify/lookup 분기가 생기기 전까지의 임시 처리.
+        def temporary_answer() -> Iterator[str]:
+            yield sse("text", {"delta": result})
+            yield sse("tracks", {"tracks": []})
+            yield sse("done", {})
+
+        return StreamingResponse(
+            temporary_answer(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    client, tracks = result
     return StreamingResponse(
-        # 되돌릴 때: stream_answer(client, body.message, search_context, tracks, body.user_context)
         stream_answer(client, body.message, tracks, body.user_context),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -66,10 +96,10 @@ def chat(body: ChatRequest) -> StreamingResponse:
             "model": ErrorResponse,
             "description": "audio 파일 누락 등 요청값 검증 실패",
         },
-        501: {
-            "model": ErrorResponse,
-            "description": "STT 현재 아직 미구현",
-        },
+        400: {"model": ErrorResponse, "description": "빈 음성, 길이 초과 또는 인식된 발화 없음"},
+        413: {"model": ErrorResponse, "description": "음성 파일 용량 초과"},
+        415: {"model": ErrorResponse, "description": "지원하지 않거나 손상된 음성 파일"},
+        503: {"model": ErrorResponse, "description": "전사 서비스 사용 불가"},
     },
     tags=["transcriptions"],
 )
@@ -88,7 +118,7 @@ async def validation_error_handler(
     """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환한다."""
 
     return JSONResponse(
-        status_code=422,
+        status_code=400 if _request.url.path == "/v1/chat/messages" else 422,
         content={
             "code": "INVALID_REQUEST",
             "message": "요청값이 올바르지 않습니다.",
