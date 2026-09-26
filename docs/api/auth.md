@@ -4,19 +4,19 @@
 
 ## 설정과 요청
 
-- Spring과 AI 서버에 동일한 비밀값을 `AI_SERVICE_API_KEY`로 설정한다. 배포 환경에서는 서버 환경변수 또는 비밀값 저장소를 사용한다.
+- AI 서버는 비밀값을 `AI_SERVICE_API_KEY`로 읽는다. Spring의 채팅 `RECOMMENDATION_AI_AUTH_TOKEN`과 전사 `SPEECH_TRANSCRIPTION_AI_AUTH_TOKEN`에는 같은 값을 설정한다. 배포 환경에서는 서버 환경변수 또는 비밀값 저장소를 사용한다.
 - `.env.example`에는 이름만 기록한다. 실제 값은 Git에 올리지 않는 `.env`에 저장한다.
-- Spring은 HTTP 헤더 `X-AI-API-Key`에 환경변수의 값을 넣는다. 채팅 JSON과 전사 multipart `audio` 본문은 유지한다.
+- Spring은 두 요청에 HTTP 헤더 `Authorization: Bearer <비밀값>`을 보낸다. 연동 본문 규격은 채팅 JSON과 전사 multipart `audio`다.
 - 충분히 긴 암호학적 난수를 사용한다. 권장 생성 규격은 32바이트 난수를 hex로 인코딩한 64자리 문자열이다. 코드에서는 이 길이를 강제하지 않는다.
 - AI는 키 누락·공백 설정 시 서버 시작을 실패시킨다. 인증 우회 모드는 제공하지 않는다.
 
 ```http
-X-AI-API-Key: <AI_SERVICE_API_KEY 값>
+Authorization: Bearer <AI_SERVICE_API_KEY 값>
 ```
 
 ## 인증 실패
 
-헤더 누락과 값 불일치는 모두 HTTP `401 Unauthorized`와 아래 본문을 반환한다. Spring은 이 오류를 자동 재시도하지 않는다.
+헤더 누락·Bearer 형식 오류·값 불일치는 모두 HTTP `401 Unauthorized`와 아래 본문을 반환한다. Spring은 이 오류를 자동 재시도하지 않는다.
 
 ```json
 {

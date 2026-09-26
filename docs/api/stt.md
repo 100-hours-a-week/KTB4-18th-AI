@@ -12,7 +12,7 @@ uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
 
 ```sh
 curl http://localhost:8001/v1/transcriptions \
-  -H "X-AI-API-Key: ${AI_SERVICE_API_KEY}" \
+  -H "Authorization: Bearer ${AI_SERVICE_API_KEY}" \
   -F 'audio=@recording.webm;type=audio/webm'
 ```
 
@@ -40,7 +40,7 @@ FFmpeg로 16 kHz 모노 PCM을 최대 61초까지 디코딩해 샘플 수로 길
 
 | HTTP | code | details.reason |
 |---|---|---|
-| 401 | UNAUTHORIZED | 서버 인증 키 누락·불일치, details는 null |
+| 401 | UNAUTHORIZED | 서버 인증 헤더 누락·형식 오류·값 불일치, details는 null |
 | 400 | INVALID_REQUEST | EMPTY_AUDIO, AUDIO_TOO_LONG, NO_SPEECH_DETECTED |
 | 413 | PAYLOAD_TOO_LARGE | AUDIO_TOO_LARGE |
 | 415 | UNSUPPORTED_MEDIA_TYPE | UNSUPPORTED_AUDIO_FORMAT, MIME_TYPE_MISMATCH |
