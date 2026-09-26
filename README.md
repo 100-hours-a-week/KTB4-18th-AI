@@ -14,6 +14,8 @@ uv sync --locked
 ```
 
 환경변수가 필요하면 `.env.example`을 `.env`로 복사하고 개인 API 키를 입력합니다.
+서버 시작 전 `AI_SERVICE_API_KEY`를 설정해야 합니다. Spring과 동일한 비밀값을 사용하며,
+채팅·전사 요청의 `X-AI-API-Key` 헤더로 전달합니다. [서버 간 인증 계약](docs/api/auth.md)을 참고하세요.
 예시의 모델·외부 API·타임아웃 설정은 로컬 실험용이며 팀의 확정 설정이 아닙니다.
 음성 전사 실행 방법과 API 계약은 [STT API 안내](docs/api/stt.md)를 참고합니다.
 
