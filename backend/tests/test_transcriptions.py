@@ -37,7 +37,7 @@ def client(monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("unexpected paid API request")
     monkeypatch.setattr(stt.httpx, "post", unexpected)
-    return TestClient(main.app)
+    return TestClient(main.app, headers={"X-AI-API-Key": "test-service-key"})
 
 
 def upload(client, data, mime="audio/wav"):
@@ -134,7 +134,7 @@ def test_missing_key(client, monkeypatch):
 def test_missing_file_and_openapi(client):
     assert client.post("/v1/transcriptions").status_code == 422
     responses = client.get("/openapi.json").json()["paths"]["/v1/transcriptions"]["post"]["responses"]
-    assert set(responses) == {"200", "400", "413", "415", "422", "503"}
+    assert set(responses) == {"200", "400", "401", "413", "415", "422", "503"}
 
 
 def test_exact_duration_limit(client, monkeypatch):
