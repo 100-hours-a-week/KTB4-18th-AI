@@ -17,8 +17,7 @@ MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_SECONDS = 60
 SAMPLE_RATE = 16000
 STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
-# 비용 검증 없이 환경변수로 다른 모델이 선택되지 않도록 고정한다.
-STT_MODEL = "openai/whisper-large-v3-turbo"
+DEFAULT_STT_MODEL = "openai/whisper-large-v3-turbo"
 
 
 def _error(status: int, reason: str, message: str) -> HTTPException:
@@ -112,13 +111,14 @@ def transcribe_audio(audio: UploadFile) -> str:
     api_key = os.getenv("OPENROUTER_STT_API_KEY", "").strip()
     if not api_key or api_key.startswith("<"):
         raise _unavailable()
+    model = os.getenv("STT_MODEL", "").strip() or DEFAULT_STT_MODEL
     wav = _normalize_audio(data, audio_format)
     try:
         # 자동 재시도는 중복 과금 가능성이 있어 사용하지 않는다.
         response = httpx.post(
             STT_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": STT_MODEL, "input_audio": {
+            json={"model": model, "input_audio": {
                 "data": base64.b64encode(wav).decode("ascii"), "format": "wav",
             }, "language": "ko", "response_format": "json"},
             timeout=httpx.Timeout(30.0, connect=3.0),

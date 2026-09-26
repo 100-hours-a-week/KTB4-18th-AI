@@ -49,14 +49,20 @@ def mock_response(monkeypatch, payload, status=200):
         status, json=payload, request=httpx.Request("POST", stt.STT_URL)))
 
 
-def test_success_contract_and_provider_request(client, monkeypatch):
-    # 이전 .env 설정이 남아 있어도 다른 모델로 유료 요청을 보내지 않는다.
-    monkeypatch.setenv("STT_MODEL", "openai/gpt-4o-mini-transcribe")
+@pytest.mark.parametrize("model,expected", [
+    (None, "openai/whisper-large-v3-turbo"),
+    ("", "openai/whisper-large-v3-turbo"),
+    ("   ", "openai/whisper-large-v3-turbo"),
+    (" test/custom-stt-model ", "test/custom-stt-model"),
+])
+def test_success_contract_and_provider_request(client, monkeypatch, model, expected):
+    if model is not None:
+        monkeypatch.setenv("STT_MODEL", model)
     def post(url, **kwargs):
         assert url == stt.STT_URL
         assert kwargs["headers"]["Authorization"] == "Bearer test-key"
         body = kwargs["json"]
-        assert body["model"] == "openai/whisper-large-v3-turbo"
+        assert body["model"] == expected
         assert body["language"] == "ko"
         assert body["input_audio"]["format"] == "wav"
         with wave.open(io.BytesIO(base64.b64decode(body["input_audio"]["data"]))) as wav:
