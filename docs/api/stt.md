@@ -16,7 +16,9 @@ curl http://localhost:8001/v1/transcriptions \
 ```
 
 - `OPENROUTER_STT_API_KEY`: OpenRouter에서 발급한 STT 전용 키. 추천·임베딩 키와 별도다.
-- 모델은 코드에서 `openai/whisper-large-v3-turbo`로 고정한다. 기존 `.env`의 `STT_MODEL`은 사용하지 않는다.
+- 모델은 `STT_MODEL` 환경변수로 설정한다. 미설정 또는 공백이면 기존 모델 `openai/whisper-large-v3-turbo`를 사용한다.
+- 로컬과 운영에서 같은 환경변수 이름을 사용하고, 키와 모델 값은 각 환경에 설정한다. 기존 `.env`에 `STT_MODEL`이 남아 있다면 배포 전에 확인한다.
+- 모델 변경 시 OpenRouter 전사 API 호환성과 비용을 확인한다.
 - STT용 키에 OpenRouter 사용 한도를 설정한다. 잔액 부족·한도 초과도 503으로 처리하며 다른 키나 모델로 우회하지 않는다.
 - 외부 호출: `https://openrouter.ai/api/v1/audio/transcriptions`, 한국어 `ko`, JSON 응답.
 - 연결 타임아웃 3초, 읽기·쓰기 등 HTTP 단계별 타임아웃 30초. 자동 재시도 없음.
@@ -52,7 +54,7 @@ uv run pytest backend/tests/test_transcriptions.py -q
 
 기존 Wiki의 Base64 요청·30초 설계와 달리 이 구현은 현재 코드의 multipart·60초 계약을 따른다. 10 MiB는 기존 설계에서 가져온 초기 구현 상한이다. 정책 변경 시 코드·OpenAPI·이 문서를 함께 수정한다.
 
-참고: [OpenRouter STT API](https://openrouter.ai/docs/guides/overview/multimodal/stt), [고정 모델](https://openrouter.ai/openai/whisper-large-v3-turbo).
+참고: [OpenRouter STT API](https://openrouter.ai/docs/guides/overview/multimodal/stt), [기본 모델](https://openrouter.ai/openai/whisper-large-v3-turbo).
 
 ## UI로 수동 테스트
 
