@@ -22,7 +22,7 @@ uv sync --locked
 | 기능 | 키 환경변수 | 모델 |
 | --- | --- | --- |
 | 추천 답변·이유 | `OPENROUTER_LLM_API_KEY` | `LLM_MODEL` |
-| 음성 전사 | `OPENROUTER_STT_API_KEY` | `openai/whisper-large-v3-turbo` 고정 |
+| 음성 전사 | `OPENROUTER_STT_API_KEY` | `STT_MODEL` (기본값: `openai/whisper-large-v3-turbo`) |
 | 검색 임베딩 | `OPENROUTER_EMBEDDING_API_KEY` | `EMBEDDING_MODEL=google/gemini-embedding-2`, 3072차원 |
 
 기존 `.env`의 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`는 사용하지 않습니다.
