@@ -25,7 +25,7 @@ AI 파트가 사용하는 테이블 두 개. 백엔드 도메인 테이블(사�
 | `duration_ms` | INTEGER | O | 곡 전체 길이(밀리초). 임베딩에 쓰는 미리듣기 30초와는 별개다 |
 | `seed_artist` | TEXT | O | 수집 시 사용한 아티스트명. 디버깅용이며 서비스 로직에서는 쓰지 않는다 |
 | `bucket` | VARCHAR(32) | O | 수집 분류 (`kpop`, `pop_hiphop_rnb`, `electronic_rock`). 코퍼스 구성 점검용 |
-| `mood_tags` | JSONB | O | **분위기 태그.** 아래 참고 |
+| `mood_tags` | JSON | O | **분위기 태그.** 아래 참고 |
 | `emb_gemini` | vector(3072) | **O** | **현재 추천 검색에 쓰는 임베딩** (gemini-embedding-2, 오디오 30초 미리듣기). NULL이면 아직 처리되지 않은 곡 |
 | `emb_clap` | vector(512) | **O** | 이전 세대 임베딩. 더 이상 검색에 쓰이지 않고 보관용/롤백용으로만 남아 있다. NULL이면 아직 처리되지 않은 곡 |
 | `model_version` | VARCHAR(128) | O | `emb_clap`을 생성한 모델. 모델 교체 시 재임베딩 대상을 골라내는 데 쓴다(`emb_gemini`는 별도 관리, 아래 참고) |
@@ -93,7 +93,7 @@ FROM tracks WHERE track_id = ANY($1);
 
 오디오에서 추출한 값이며 사람이 붙인 라벨이 아니다. 용도는 두 가지다.
 
-- **필터**: `WHERE mood_tags ? 'relaxing'` 또는 `WHERE (mood_tags->>'calm')::float > 0.5`
+- **필터**: `WHERE mood_tags::jsonb ? 'relaxing'` (컬럼이 `json`이라 `?` 연산자를 쓰려면 캐스팅 필요) 또는 `WHERE (mood_tags->>'calm')::float > 0.5`
 - **추천 이유 생성**: LLM에 넘겨 설명 문장을 만든다
 
 태그 어휘는 56개로 고정되어 있다(MTG-Jamendo mood/theme). `sad`, `energetic`, `dark`, `epic`, `dream`, `film` 등.
