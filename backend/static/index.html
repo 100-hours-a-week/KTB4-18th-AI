@@ -139,6 +139,8 @@
         <div class="chathead"><span>‹</span><div class="h-title">음악 추천 챗봇</div><button class="ghostbtn" id="resetBtn" type="button">↻ 초기화</button></div>
         <section class="msgscroll" id="msgScroll" aria-live="polite"></section>
         <div class="composer">
+          <label for="serviceApiKey">로컬 테스트용 서버 인증 키</label>
+          <input class="textfield" id="serviceApiKey" type="password" placeholder="AI_SERVICE_API_KEY 값" autocomplete="off" spellcheck="false" style="width:100%;margin:8px 0">
           <div class="chips" id="chips"></div>
           <div id="sttStatus" class="hint" role="status" aria-live="polite">마이크 버튼을 눌러 녹음하세요. 전사문을 확인한 뒤 전송할 수 있습니다.</div>
           <div class="inputrow">
@@ -221,7 +223,7 @@
       const started = performance.now();
       let response;
       try {
-        response = await fetch(CHAT_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        response = await fetch(CHAT_URL, { method: "POST", headers: { "Content-Type": "application/json", "X-AI-API-Key": $("serviceApiKey").value }, body: JSON.stringify(body) });
       } catch (error) {
         setConnection("err", "연결 실패"); setStatus("err", "ERR", "No response", null); setResBox({ error: "서버에 연결하지 못했습니다. uvicorn 실행 상태를 확인하세요.", detail: String(error) }, true); userRow.querySelector(".bubble").classList.remove("pending"); const note = document.createElement("div"); note.className = "errnote"; note.textContent = "전송 실패 — 서버 미응답"; userRow.append(note); pushLog("ERR"); return;
       }
@@ -319,7 +321,7 @@
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60000);
       try {
-        const response = await fetch(STT_URL, { method: "POST", body: form, signal: controller.signal });
+        const response = await fetch(STT_URL, { method: "POST", headers: { "X-AI-API-Key": $("serviceApiKey").value }, body: form, signal: controller.signal });
         let data;
         try { data = await response.json(); } catch { data = { message: "서버 응답이 JSON이 아닙니다." }; }
         const valid = response.ok && typeof data.transcript === "string" && data.transcript.trim();
