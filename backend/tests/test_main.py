@@ -12,7 +12,7 @@ from backend import main, recommendation
 from backend.graph import nodes
 from backend.schemas import Track
 
-AUTH_HEADERS = {"X-AI-API-Key": "test-service-key"}
+AUTH_HEADERS = {"Authorization": "Bearer test-service-key"}
 
 THREAD_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"

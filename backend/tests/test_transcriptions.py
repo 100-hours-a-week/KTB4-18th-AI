@@ -37,7 +37,7 @@ def client(monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("unexpected paid API request")
     monkeypatch.setattr(stt.httpx, "post", unexpected)
-    return TestClient(main.app, headers={"X-AI-API-Key": "test-service-key"})
+    return TestClient(main.app, headers={"Authorization": "Bearer test-service-key"})
 
 
 def upload(client, data, mime="audio/wav"):

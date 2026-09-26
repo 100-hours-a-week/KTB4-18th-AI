@@ -16,12 +16,15 @@ def service_api_key() -> str:
 
 
 def require_service_api_key(
-    supplied_key: Annotated[str | None, Header(alias="X-AI-API-Key")] = None,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> None:
-    """키 누락·불일치를 동일한 공통 오류로 반환한다."""
+    """Bearer 형식과 비밀값을 검사하고 인증 실패를 공통 오류로 반환한다."""
     expected_key = service_api_key()
-    if supplied_key is None or not secrets.compare_digest(
-        supplied_key.encode("utf-8"), expected_key.encode("utf-8")
+    parts = authorization.split() if authorization else []
+    if (
+        len(parts) != 2
+        or parts[0].casefold() != "bearer"
+        or not secrets.compare_digest(parts[1].encode("utf-8"), expected_key.encode("utf-8"))
     ):
         raise HTTPException(
             status_code=401,

@@ -10,16 +10,17 @@ ERROR = {"code": "UNAUTHORIZED", "message": "서버 인증에 실패했습니다
 
 
 @pytest.mark.parametrize("path", ["/v1/chat/messages", "/v1/transcriptions"])
-@pytest.mark.parametrize("key", [None, "", "wrong-key", "한글키"])
-def test_invalid_key_blocks_processing(monkeypatch, path, key):
+@pytest.mark.parametrize("authorization", [
+    None, "", "test-service-key", "Basic test-service-key", "Bearer",
+    "Bearer ", "Bearer wrong-key", "Bearer test-service-key extra", "bearer wrong-key",
+])
+def test_invalid_key_blocks_processing(monkeypatch, path, authorization):
     def unexpected(*args, **kwargs):
         pytest.fail("인증 실패 후 AI 처리 실행")
 
     monkeypatch.setattr(main, "prepare_recommendation", unexpected)
     monkeypatch.setattr(main, "transcribe_audio", unexpected)
-    headers = {} if key is None else {"X-AI-API-Key": key}
-    # HTTP 헤더는 바이트로 전달해 잘못된 비ASCII 값에도 500이 나지 않는지 확인한다.
-    headers = {name: value.encode("utf-8") for name, value in headers.items()}
+    headers = {} if authorization is None else {"Authorization": authorization}
     with TestClient(main.app) as client:
         response = client.post(path, headers=headers)
     assert response.status_code == 401
@@ -29,7 +30,7 @@ def test_invalid_key_blocks_processing(monkeypatch, path, key):
 def test_valid_key_preserves_chat_and_transcription_contract(monkeypatch):
     monkeypatch.setattr(main, "prepare_recommendation", lambda *args: ChatOutcome(kind="static", text="안내"))
     monkeypatch.setattr(main, "transcribe_audio", lambda audio: "전사문")
-    with TestClient(main.app, headers={"x-ai-api-key": "test-service-key"}) as client:
+    with TestClient(main.app, headers={"Authorization": "Bearer test-service-key"}) as client:
         chat = client.post("/v1/chat/messages", json={
             "thread_id": "11111111-1111-4111-8111-111111111111",
             "request_id": "22222222-2222-4222-8222-222222222222",
@@ -39,6 +40,15 @@ def test_valid_key_preserves_chat_and_transcription_contract(monkeypatch):
     assert chat.status_code == 200
     assert "event: done" in chat.text
     assert stt.json() == {"transcript": "전사문"}
+
+
+def test_bearer_scheme_is_case_insensitive(monkeypatch):
+    monkeypatch.setattr(main, "transcribe_audio", lambda audio: "전사문")
+    with TestClient(main.app) as client:
+        response = client.post("/v1/transcriptions",
+                               headers={"Authorization": "bearer test-service-key"},
+                               files={"audio": ("recording.webm", b"audio", "audio/webm")})
+    assert response.status_code == 200
 
 
 @pytest.mark.parametrize("key", [None, "", "   "])
@@ -61,4 +71,4 @@ def test_health_endpoints_remain_unauthenticated(monkeypatch):
     for path in ("/v1/chat/messages", "/v1/transcriptions"):
         operation = schema["paths"][path]["post"]
         assert "401" in operation["responses"]
-        assert any(p["name"] == "X-AI-API-Key" for p in operation["parameters"])
+        assert any(p["name"] == "Authorization" for p in operation["parameters"])
