@@ -1,17 +1,15 @@
 """Spring Backend용 V1 API와 로컬 테스트 UI를 제공하는 FastAPI 서버."""
 
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.auth import require_service_api_key, service_api_key
 from backend.readiness import database_is_ready
 from backend.recommendation import (
     _catalog_unavailable,
@@ -27,14 +25,7 @@ from backend.transcriptions import transcribe_audio
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """요청을 받기 전에 서버 간 인증 설정을 확인한다."""
-    service_api_key()
-    yield
-
-
-app = FastAPI(title="머문음 AI 채팅", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="머문음 AI 채팅", version="0.2.0")
 
 
 # ===== API 엔드포인트 =====
@@ -62,7 +53,6 @@ def readiness(response: Response) -> HealthResponse:
     "/v1/chat/messages",
     response_class=StreamingResponse,
     responses={
-        401: {"model": ErrorResponse, "description": "서버 인증 실패"},
         200: {"content": {"text/event-stream": {}}},
         400: {
             "model": ErrorResponse,
@@ -73,7 +63,6 @@ def readiness(response: Response) -> HealthResponse:
             "description": "모델 또는 음악 검색 서비스 사용 불가",
         },
     },
-    dependencies=[Depends(require_service_api_key)],
     tags=["chat"],
 )
 def chat(body: ChatRequest) -> StreamingResponse:
@@ -114,7 +103,6 @@ def chat(body: ChatRequest) -> StreamingResponse:
     "/v1/transcriptions",
     response_model=TranscriptionResponse,
     responses={
-        401: {"model": ErrorResponse, "description": "서버 인증 실패"},
         422: {
             "model": ErrorResponse,
             "description": "audio 파일 누락 등 요청값 검증 실패",
@@ -124,7 +112,6 @@ def chat(body: ChatRequest) -> StreamingResponse:
         415: {"model": ErrorResponse, "description": "지원하지 않거나 손상된 음성 파일"},
         503: {"model": ErrorResponse, "description": "전사 서비스 사용 불가"},
     },
-    dependencies=[Depends(require_service_api_key)],
     tags=["transcriptions"],
 )
 def transcriptions(audio: UploadFile) -> TranscriptionResponse:

@@ -12,8 +12,6 @@ from backend import main, recommendation
 from backend.graph import nodes
 from backend.schemas import Track
 
-AUTH_HEADERS = {"Authorization": "Bearer test-service-key"}
-
 THREAD_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 
@@ -139,7 +137,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
         ),
     )
 
-    return TestClient(main.app, headers=AUTH_HEADERS), fake_openai
+    return TestClient(main.app), fake_openai
 
 
 def test_chat_streams_text_before_completed_track_cards(
@@ -214,7 +212,7 @@ def test_chat_rejects_blank_message(client: tuple[TestClient, FakeOpenAI]) -> No
 def test_chat_requires_openrouter_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """openrouter api key가 없으면 오류가 잘 나오는지 확인한다."""
     monkeypatch.delenv("OPENROUTER_LLM_API_KEY", raising=False)
-    response = TestClient(main.app, headers=AUTH_HEADERS).post("/v1/chat/messages", json=request_body("안녕"))
+    response = TestClient(main.app).post("/v1/chat/messages", json=request_body("안녕"))
 
     assert response.status_code == 503
 
@@ -226,14 +224,14 @@ def test_chat_requires_openrouter_embedding_api_key(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(nodes, "classify", lambda client, messages: recommend_classification())
     monkeypatch.delenv("OPENROUTER_EMBEDDING_API_KEY", raising=False)
     monkeypatch.setattr(recommendation, "OpenAI", lambda **kwargs: FakeOpenAI())
-    response = TestClient(main.app, headers=AUTH_HEADERS).post("/v1/chat/messages", json=request_body("안녕"))
+    response = TestClient(main.app).post("/v1/chat/messages", json=request_body("안녕"))
 
     assert response.status_code == 503
 
 
 def test_health_does_not_call_external_services() -> None:
     """health 엔드포인트가 외부 호출 없이도 status가 잘 나오는지 확인한다."""
-    response = TestClient(main.app, headers=AUTH_HEADERS).get("/health")
+    response = TestClient(main.app).get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -421,7 +419,7 @@ def test_lookup_no_target_asks_without_db_call(client, monkeypatch):
 
 def test_local_chat_page_uses_v1_fields() -> None:
     """테스트용 HTML 페이지가 v1에 맞게 나오는지 확인한다."""
-    response = TestClient(main.app, headers=AUTH_HEADERS).get("/app/")
+    response = TestClient(main.app).get("/app/")
 
     assert response.status_code == 200
     assert 'const CHAT_URL = "/v1/chat/messages"' in response.text

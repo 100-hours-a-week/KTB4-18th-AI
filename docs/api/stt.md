@@ -6,13 +6,12 @@
 
 ```sh
 uv sync --locked
-# .env에 AI_SERVICE_API_KEY와 OPENROUTER_STT_API_KEY를 설정한다.
+# .env에 OPENROUTER_STT_API_KEY를 설정한다.
 uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
 ```
 
 ```sh
 curl http://localhost:8001/v1/transcriptions \
-  -H "Authorization: Bearer ${AI_SERVICE_API_KEY}" \
   -F 'audio=@recording.webm;type=audio/webm'
 ```
 
@@ -24,9 +23,6 @@ curl http://localhost:8001/v1/transcriptions \
 - 외부 호출: `https://openrouter.ai/api/v1/audio/transcriptions`, 한국어 `ko`, JSON 응답.
 - 연결 타임아웃 3초, 읽기·쓰기 등 HTTP 단계별 타임아웃 30초. 자동 재시도 없음.
 - FFmpeg는 `imageio-ffmpeg` 패키지의 실행 파일을 사용한다. 지원 휠이 없는 배포 환경에서는 시스템 FFmpeg 설치 또는 `IMAGEIO_FFMPEG_EXE` 설정이 필요하다.
-
-curl 실행 셸에도 `AI_SERVICE_API_KEY`를 설정해야 한다. `.env` 파일을 셸이 자동으로 읽지는 않는다.
-인증 계약은 [서버 간 인증](auth.md)을 참고한다.
 
 ## 입력과 검증
 
@@ -40,7 +36,6 @@ FFmpeg로 16 kHz 모노 PCM을 최대 61초까지 디코딩해 샘플 수로 길
 
 | HTTP | code | details.reason |
 |---|---|---|
-| 401 | UNAUTHORIZED | 서버 인증 헤더 누락·형식 오류·값 불일치, details는 null |
 | 400 | INVALID_REQUEST | EMPTY_AUDIO, AUDIO_TOO_LONG, NO_SPEECH_DETECTED |
 | 413 | PAYLOAD_TOO_LARGE | AUDIO_TOO_LARGE |
 | 415 | UNSUPPORTED_MEDIA_TYPE | UNSUPPORTED_AUDIO_FORMAT, MIME_TYPE_MISMATCH |
@@ -65,8 +60,6 @@ uv run pytest backend/tests/test_transcriptions.py -q
 
 서버 실행 후 `http://localhost:8001/app/`에 접속한다. HTML 파일을 직접 열지 않는다.
 
-먼저 로컬 콘솔의 **로컬 테스트용 서버 인증 키** 입력란에 개발용 `AI_SERVICE_API_KEY` 값을 입력한다. 브라우저 저장소에는 저장하지 않으며 새로고침 후 다시 입력한다. 운영 키는 입력하지 않는다.
-
 1. 전송 버튼 왼쪽의 **마이크 버튼**을 누르고 마이크 권한을 허용한다.
 2. 다시 누르거나 60초가 지나면 녹음을 종료하고 multipart `audio` 필드로 전사 API에 전송한다. 별도의 파일 선택·업로드 UI는 제공하지 않는다.
 3. 인스펙터에서 요청·HTTP 상태·JSON 응답을 확인한다. 모바일에서는 입력창 위 상태 문구를 확인한다.
@@ -74,6 +67,6 @@ uv run pytest backend/tests/test_transcriptions.py -q
 
 모바일 마이크는 HTTPS 접속이 필요하다(localhost 제외). 파일 샘플은 위 curl 명령 또는 `/docs`의 전사 엔드포인트에서 테스트한다.
 
-[samples/silence.wav](samples/silence.wav)는 1초 디지털 무음으로 **오류 확인용**이다. 서버 인증과 STT 키 설정 후에는 `400 EMPTY_AUDIO`, STT 키가 없으면 설정 검사에서 `503`이 반환된다. 서버 인증 키가 없거나 다르면 `401`이 반환된다. 이 파일은 외부 STT 호출 없이 거부된다. 한국어 인식 성공 테스트에는 별도의 실제 발화 녹음이 필요하다.
+[samples/silence.wav](samples/silence.wav)는 1초 디지털 무음으로 **오류 확인용**이다. 키 설정 후에는 `400 EMPTY_AUDIO`, 키가 없으면 설정 검사에서 `503`이 반환된다. 이 파일은 외부 STT 호출 없이 거부된다. 한국어 인식 성공 테스트에는 별도의 실제 발화 녹음이 필요하다.
 
-OpenRouter 키는 서버의 `.env`에서 설정하며 UI에 입력하지 않는다. 로컬 콘솔에는 개발용 서버 간 인증 키만 입력한다. 모델은 `STT_MODEL`로 설정하고 변경 후 검증한다.
+API 키는 서버의 `.env`에서 설정한다. 모델 변경은 코드 수정과 검증을 거쳐야 한다. API 키를 UI에 입력하지 않는다.
