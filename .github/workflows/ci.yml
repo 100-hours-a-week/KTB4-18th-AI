@@ -1,0 +1,30 @@
+# PR과 push마다 의존성 잠금 파일 검증과 pytest를 돌린다.
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+# PR에 새 커밋이 오면 이전 실행은 취소한다. dev/main push는 커밋마다 결과를 남기려고 취소하지 않는다
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0 # 이 액션은 메이저 태그(v10)를 제공하지 않아 정확한 버전으로 고정
+        with:
+          python-version: ">=3.12.13,<3.13" # pyproject 요구(>=3.12.13) + 운영 이미지(python:3.12)와 같은 3.12 계열. 러너 기본 3.12.3은 조건 미달이라 uv가 새로 설치
+          enable-cache: true
+      # --locked: uv.lock이 pyproject.toml과 어긋나면 실패시킨다
+      - run: uv sync --locked
+      - run: uv run --locked pytest -q backend/tests
