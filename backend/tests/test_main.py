@@ -33,6 +33,7 @@ def classification(intent: str, **overrides: object) -> dict:
         "recommend_unsupported_condition": False,
         "recommend_genres": None,
         "recommend_min_year": None,
+        "recommend_query": "퇴근길 음악",
         "lookup_song": None,
         "lookup_artist": None,
     }

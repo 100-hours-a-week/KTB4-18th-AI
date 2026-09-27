@@ -149,7 +149,15 @@ def classify_instructions(genres: list[str]) -> str:
         f"목록에서 가장 가까운 값을 고르고, 목록에 없는 명백한 장르명이면 그대로 "
         f"적어도 됩니다: {genre_hint}. 장르 언급이 없으면 null.\n"
         "- recommend_min_year: \"최신곡\", \"2020년 이후\" 같은 연도 하한이 있으면 "
-        "정수로, 없으면 null.\n\n"
+        "정수로, 없으면 null.\n"
+        "- recommend_query: 검색·이유생성에 쓸, 이번 요청을 독립적으로 이해할 수 "
+        "있는 한국어 문장 하나로 재구성하세요. conversation 앞부분에서 이미 나온 "
+        "분위기·상황을 이번 메시지가 그대로 이어받는 거라면 그 내용을 이번 문장에 "
+        "합쳐서 쓰고(예: 이전에 \"퇴근길에 듣기 좋은 잔잔한 노래\"였고 이번 메시지가 "
+        "\"좀 더 신나게\"면 → \"퇴근길에 듣기 좋은 신나는 노래\"), 이번 메시지 "
+        "자체에 분위기·상황이 다 들어있다면 그걸 그대로 정리해서 쓰면 됩니다. "
+        "\"방금 추천한 곡 빼고\", \"다른 곡으로\" 같은 제외·재요청 지시는 이미 "
+        "따로 처리되니 이 문장에는 넣지 마세요.\n\n"
         "intent가 lookup일 때 추가로 채울 필드:\n"
         "- lookup_song: 조회 대상 곡 제목. 모르면 null.\n"
         "- lookup_artist: 조회 대상 아티스트명. 한국 아티스트라면 우리 카탈로그가 "
@@ -158,8 +166,11 @@ def classify_instructions(genres: list[str]) -> str:
         "모르면 null.\n"
         "  (제목과 아티스트 중 아는 것만 채우면 됩니다. 대상 자체가 너무 모호하면 "
         "둘 다 null로 두세요.)\n\n"
-        "intent가 recommend/lookup이 아니면 위 필드들은 각각 "
-        "false/false/null/null/null/null로 채우세요."
+        "intent가 recommend/lookup이 아니면 recommend_has_enough_info/"
+        "recommend_unsupported_condition/recommend_genres/recommend_min_year/"
+        "lookup_song/lookup_artist는 각각 false/false/null/null/null/null로 "
+        "채우세요. recommend_query는 intent와 상관없이 위 방식대로 항상 채우거나, "
+        "재구성할 필요가 없으면 이번 메시지 원문을 그대로 넣으세요."
     )
 
 
@@ -195,6 +206,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                                 "items": {"type": "string"},
                             },
                             "recommend_min_year": {"type": ["integer", "null"]},
+                            "recommend_query": {"type": "string"},
                             "lookup_song": {"type": ["string", "null"]},
                             "lookup_artist": {"type": ["string", "null"]},
                         },
@@ -204,6 +216,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "recommend_unsupported_condition",
                             "recommend_genres",
                             "recommend_min_year",
+                            "recommend_query",
                             "lookup_song",
                             "lookup_artist",
                         ],
