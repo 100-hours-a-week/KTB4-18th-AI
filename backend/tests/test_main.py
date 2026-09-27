@@ -328,6 +328,47 @@ def test_recommend_forwards_genres_and_min_year_to_search(client, monkeypatch):
     assert calls == [{"genres": ["K-Pop"], "min_year": 2020}]
 
 
+def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
+    """검색·이유생성이 이번 턴 원문이 아니라 classify가 재구성한 recommend_query를 쓰는지 확인한다.
+
+    후속 요청("방금 추천한 곡들은 빼고...")은 원문만으론 원래 분위기가 안 담겨 있어서,
+    embed_node/search_node/reason_node가 실수로 state["message"]로 되돌아가면 이 테스트가 잡아준다.
+    """
+    test_client, fake_openai = client
+    resolved_query = "퇴근길에 어울리는 신나는 노래"
+    monkeypatch.setattr(
+        nodes, "classify",
+        lambda client, messages: recommend_classification(recommend_query=resolved_query),
+    )
+
+    embed_calls: list[str] = []
+    monkeypatch.setattr(
+        nodes, "embed_query",
+        lambda embedding_client, message: embed_calls.append(message) or [0.1, 0.2, 0.3],
+    )
+
+    search_calls: list[str] = []
+
+    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None):
+        search_calls.append(message)
+        return [make_track()], {"123": {"lofi": 0.9}}
+
+    monkeypatch.setattr(nodes, "vector_recommendation", fake_vector_recommendation)
+
+    response = test_client.post(
+        "/v1/chat/messages",
+        json=request_body("방금 추천한 곡들은 빼고 다른 곡 3개 추천해줘"),
+    )
+
+    assert response.status_code == 200
+    assert embed_calls == [resolved_query]
+    assert search_calls == [resolved_query]
+
+    # assign_reasons가 실제로 LLM에 보낸 payload도 원문이 아니라 recommend_query여야 한다.
+    reason_call = fake_openai.responses.calls[0]
+    assert json.loads(reason_call["input"])["request"] == resolved_query
+
+
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     """제목+아티스트로 곡이 하나로 좁혀지면 조회 결과 카드와 함께 답변을 스트리밍한다."""
     test_client, fake_openai = client
