@@ -1,4 +1,6 @@
+import re
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 from sqlalchemy import select
@@ -60,7 +62,7 @@ def search(
     if exclude_ids:
         stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
     if min_year:
-        stmt = stmt.where(TrackRow.release_date >= f"{min_year}-01-01")
+        stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
     if genres:
         stmt = stmt.where(TrackRow.genre.in_(genres))
     rows = session.execute(stmt).all()
@@ -85,3 +87,46 @@ def search(
     ]
     mood_tags_by_id = {str(hit.track.track_id): hit.track.mood_tags or {} for hit in hits}
     return tracks, mood_tags_by_id
+
+
+def lookup(
+    session: Session,
+    song_title: str = None,
+    artist: str = None,
+    limit: int = 5,
+    exclude_ids: set[int] = None,
+) -> list[TrackRow]:
+    """제목/아티스트 텍스트로 곡을 조회한다."""
+
+    stmt = select(TrackRow)
+    if song_title:
+        stmt = stmt.where(TrackRow.title.ilike(f"%{song_title}%"))
+    if artist:
+        # NOTE: ilike(%artist%)는 짧은 아티스트명(예: "IU")이 "XIUMIN", "genius" 같은
+        # 무관한 단어 안에 우연히 포함돼 걸리는 문제가 있어, 단어 경계(\y) 정규식으로 매칭한다.
+        stmt = stmt.where(TrackRow.artist.op("~*")(rf"\y{re.escape(artist)}\y"))
+    if exclude_ids:
+        stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
+    stmt = stmt.order_by(TrackRow.release_date.desc()).limit(limit * 6)
+    rows = session.execute(stmt).scalars().all()
+
+    seen, out = set(), []
+    for row in rows:
+        key = (row.artist.lower(), row.title.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def known_genres(session: Session) -> list[str]:
+    """DB에 실제 존재하는 장르 문자열 목록(중복 제거, 정렬). classify 프롬프트가
+    장르를 예시로 참고할 때 쓴다 — 카탈로그가 늘어나면 자동으로 반영된다."""
+
+    rows = session.execute(
+        select(TrackRow.genre).distinct().where(TrackRow.genre.isnot(None))
+    ).scalars().all()
+    return sorted(rows)
