@@ -394,11 +394,29 @@ def assign_reasons(
             for t in tracks
         ],
     }
+    # NOTE: schema 없이 "JSON만 반환해라" 지시문에만 의존했을 때, 모델이 track_id
+    # 몇 개를 응답에서 그냥 빼먹는 일이 실측으로 5곡 중 2곡꼴로 있었다(파싱 실패가
+    # 아니라 누락이라 예외로 안 잡힘). classify()처럼 track_id를 required로 강제하는
+    # strict json_schema를 써서 전부 채우도록 만든다.
+    schema = {
+        "type": "object",
+        "properties": {t.track_id: {"type": "string"} for t in tracks},
+        "required": [t.track_id for t in tracks],
+        "additionalProperties": False,
+    }
     try:
         response = client.responses.create(
             model=os.environ["LLM_MODEL"],
             instructions=reason_instructions(),
             input=json.dumps(payload, ensure_ascii=False),
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "song_reasons",
+                    "schema": schema,
+                    "strict": True,
+                }
+            },
         )
         data = json.loads(response.output_text or "{}")
     except Exception as error:

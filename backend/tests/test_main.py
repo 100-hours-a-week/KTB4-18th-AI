@@ -163,6 +163,24 @@ def test_chat_streams_text_before_completed_track_cards(
     assert test_client.post("/chat/stream", json=request_body()).status_code == 404
 
 
+def test_assign_reasons_requires_every_track_id_via_schema(client):
+    """assign_reasons가 모든 곡의 reason을 강제로 채우도록 json_schema에 track_id를 넣는지 확인한다.
+
+    스키마 강제 없이 자유 텍스트 JSON 지시문에만 의존했을 때, LLM이 track_id 일부를
+    그냥 빼먹어 기본 문구로 남는 문제가 실측으로 있었다(5곡 중 2곡꼴 누락). 나중에
+    누가 text=... 스키마 지정을 지워버리면 이 테스트가 바로 잡아준다.
+    """
+    test_client, fake_openai = client
+    response = test_client.post("/v1/chat/messages", json=request_body())
+
+    assert response.status_code == 200
+    reason_call = fake_openai.responses.calls[0]
+    schema_format = reason_call["text"]["format"]
+    assert schema_format["strict"] is True
+    assert schema_format["schema"]["required"] == ["123"]  # make_track() 기본 track_id
+    assert schema_format["schema"]["additionalProperties"] is False
+
+
 def test_chat_no_match_returns_empty_tracks(
     client: tuple[TestClient, FakeOpenAI], monkeypatch: pytest.MonkeyPatch
 ) -> None:
