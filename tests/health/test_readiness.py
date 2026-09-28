@@ -6,7 +6,8 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import main, readiness
+from backend import main
+from backend.health import readiness
 
 
 @pytest.fixture

@@ -4,16 +4,13 @@
 
 from langchain_core.runnables import RunnableConfig
 
-from backend.graph.state import RecommendationState
-from backend.schemas import Track
-from backend.recommendation import (
-    assign_reasons,
-    classify,
-    embed_query,
-    get_embedding_client,
-    lookup_tracks_db,
-    vector_recommendation,
-)
+from backend.chat.graph.state import RecommendationState
+from db.types import Track
+from backend.recommendation.reasons import assign_reasons
+from backend.recommendation.intent import classify
+from backend.recommendation.embedding import embed_query
+from backend.providers.openrouter import get_embedding_client
+from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
 
 
 def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:

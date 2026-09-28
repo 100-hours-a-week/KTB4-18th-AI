@@ -1,157 +1,32 @@
 """Spring Backend용 V1 API와 로컬 테스트 UI를 제공하는 FastAPI 서버."""
 
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ExceptionHandler
 
-from backend.readiness import database_is_ready
-from backend.recommendation import (
-    _catalog_unavailable,
-    prepare_recommendation,
-    sse,
-    stream_answer,
-    stream_lookup_answer,
-)
-from backend.schemas import ChatRequest, ErrorResponse, HealthResponse, TranscriptionResponse
-from backend.transcriptions import transcribe_audio
+from backend.chat.router import router as chat_router
+from backend.core.config import PROJECT_ROOT
+from backend.health.router import router as health_router
+from backend.http.errors import http_error_handler, validation_error_handler
+from backend.stt.router import router as stt_router
 
 # ===== 애플리케이션 설정 =====
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 app = FastAPI(title="머문음 AI 채팅", version="0.2.0")
-
-
 # ===== API 엔드포인트 =====
-@app.get("/health", response_model=HealthResponse, tags=["health"])
-def health() -> HealthResponse:
-    """외부 의존성 확인 없이 서버 생존 여부를 반환한다."""
-
-    return HealthResponse(status="ok")
-
-
-@app.get(
-    "/readiness",
-    response_model=HealthResponse,
-    responses={503: {"model": HealthResponse, "description": "DB 또는 추천 데이터 준비 안 됨"}},
-    tags=["health"],
-)
-def readiness(response: Response) -> HealthResponse:
-    """DB 연결과 추천 가능 곡 존재 여부를 확인해 배포 준비 상태를 반환한다."""
-    ready = database_is_ready()
-    response.status_code = 200 if ready else 503
-    return HealthResponse(status="ready" if ready else "not_ready")
-
-
-@app.post(
-    "/v1/chat/messages",
-    response_class=StreamingResponse,
-    responses={
-        200: {"content": {"text/event-stream": {}}},
-        400: {
-            "model": ErrorResponse,
-            "description": "요청값 검증 실패",
-        },
-        503: {
-            "model": ErrorResponse,
-            "description": "모델 또는 음악 검색 서비스 사용 불가",
-        },
-    },
-    tags=["chat"],
-)
-def chat(body: ChatRequest) -> StreamingResponse:
-    """추천 문장과 완성된 곡 목록을 Spring Backend에 SSE로 반환한다."""
-
-    # TODO: request_id 중복 처리는 책임 범위 확정 후 연결한다.
-    # thread_id는 LangGraph checkpointer의 대화 세션 키로 흘려보낸다.
-    result = prepare_recommendation(body.message, str(body.thread_id))
-
-    # NOTE: guide/clarify/out_of_scope, recommend·lookup의 예외 분기는 고정 문구라 이렇게 처리한다.
-    if result.kind == "static":
-        def static_answer() -> Iterator[str]:
-            yield sse("text", {"delta": result.text})
-            yield sse("tracks", {"tracks": []})
-            yield sse("done", {})
-
-        return StreamingResponse(
-            static_answer(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    if result.kind == "lookup":
-        return StreamingResponse(
-            stream_lookup_answer(result.client, body.message, result.tracks),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    return StreamingResponse(
-        stream_answer(result.client, result.query, result.tracks, body.user_context),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.post(
-    "/v1/transcriptions",
-    response_model=TranscriptionResponse,
-    responses={
-        422: {
-            "model": ErrorResponse,
-            "description": "audio 파일 누락 등 요청값 검증 실패",
-        },
-        400: {"model": ErrorResponse, "description": "빈 음성, 길이 초과 또는 인식된 발화 없음"},
-        413: {"model": ErrorResponse, "description": "음성 파일 용량 초과"},
-        415: {"model": ErrorResponse, "description": "지원하지 않거나 손상된 음성 파일"},
-        503: {"model": ErrorResponse, "description": "전사 서비스 사용 불가"},
-    },
-    tags=["transcriptions"],
-)
-def transcriptions(audio: UploadFile) -> TranscriptionResponse:
-    """녹음 파일을 받아 입력창에 표시할 전사 초안을 JSON으로 반환한다."""
-
-    # NOTE: FE는 최대 60초 녹음 후 multipart의 audio 필드로 파일을 전송한다.
-    return TranscriptionResponse(transcript=transcribe_audio(audio))
-
-
+app.include_router(health_router)
+app.include_router(chat_router)
+app.include_router(stt_router)
 # ===== API 오류 처리 =====
-@app.exception_handler(RequestValidationError)
-async def validation_error_handler(
-    _request: Request, _error: RequestValidationError
-) -> JSONResponse:
-    """Pydantic 요청 검증 실패를 V1 공통 오류 응답으로 변환한다."""
-
-    return JSONResponse(
-        status_code=400 if _request.url.path == "/v1/chat/messages" else 422,
-        content={
-            "code": "INVALID_REQUEST",
-            "message": "요청값이 올바르지 않습니다.",
-            "details": None,
-        },
-    )
-
-
-@app.exception_handler(HTTPException)
-async def http_error_handler(_request: Request, error: HTTPException) -> JSONResponse:
-    """내부 HTTP 오류를 Spring Backend가 처리할 공통 형식으로 반환한다."""
-
-    if isinstance(error.detail, dict):
-        content: dict[str, Any] = error.detail
-    else:
-        content = {
-            "code": "SERVICE_UNAVAILABLE" if error.status_code == 503 else "REQUEST_FAILED",
-            "message": str(error.detail),
-            "details": None,
-        }
-    return JSONResponse(status_code=error.status_code, content=content)
-
+app.add_exception_handler(RequestValidationError, cast(ExceptionHandler, validation_error_handler))
+app.add_exception_handler(HTTPException, cast(ExceptionHandler, http_error_handler))
 
 # ===== 로컬 테스트 UI =====
 STATIC_DIR = Path(__file__).parent / "static"

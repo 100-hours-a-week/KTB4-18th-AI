@@ -31,3 +31,6 @@ worker = [
     # 최신(2.1b6.dev1438)은 cp314 휠만 배포하는 깨진 릴리스라 그 직전 버전으로 고정
     "essentia-tensorflow==2.1b6.dev1389",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

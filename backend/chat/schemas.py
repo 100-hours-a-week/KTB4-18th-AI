@@ -4,7 +4,6 @@
 Spring Backend에서 API 계약이 변경되면 이 파일도 함께 갱신해야 한다.
 """
 
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -35,35 +34,3 @@ class ChatRequest(BaseModel):
         if not value:
             raise ValueError("입력은 비어있을 수 없습니다.")
         return value
-
-
-class Track(BaseModel):
-    """추천곡에 대한 Pydantic 모델."""
-
-    track_id: str  # iTunes track ID
-    title: str  # iTunes track title
-    artist: str  # iTunes track artist
-    artwork_url: str | None  # iTunes album artwork URL (600x600)
-    preview_url: str | None  # iTunes track preview URL (30초 미리듣기)
-    store_url: str | None = None  # iTunes Store 링크
-    reason: str  # 현재 입력과 해당 곡이 어울리는 이유
-
-
-class TranscriptionResponse(BaseModel):
-    """사용자가 입력창에서 확인·수정할 음성 전사 초안."""
-
-    transcript: str
-
-
-class ErrorResponse(BaseModel):
-    """API 공통 오류 응답."""
-
-    code: str
-    message: str
-    details: dict[str, Any] | None = None
-
-
-class HealthResponse(BaseModel):
-    """AI 서버 상태 확인 응답 모델."""
-
-    status: str
