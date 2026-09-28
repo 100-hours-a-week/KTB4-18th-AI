@@ -33,6 +33,7 @@ def classification(intent: str, **overrides: object) -> dict:
         "recommend_unsupported_condition": False,
         "recommend_genres": None,
         "recommend_min_year": None,
+        "recommend_query": "퇴근길 음악",
         "lookup_song": None,
         "lookup_artist": None,
     }
@@ -160,6 +161,24 @@ def test_chat_streams_text_before_completed_track_cards(
     # 1) reason_node의 곡별 추천 이유 생성  2) 최종 답변 스트리밍
     assert len(fake_openai.responses.calls) == 2
     assert test_client.post("/chat/stream", json=request_body()).status_code == 404
+
+
+def test_assign_reasons_requires_every_track_id_via_schema(client):
+    """assign_reasons가 모든 곡의 reason을 강제로 채우도록 json_schema에 track_id를 넣는지 확인한다.
+
+    스키마 강제 없이 자유 텍스트 JSON 지시문에만 의존했을 때, LLM이 track_id 일부를
+    그냥 빼먹어 기본 문구로 남는 문제가 실측으로 있었다(5곡 중 2곡꼴 누락). 나중에
+    누가 text=... 스키마 지정을 지워버리면 이 테스트가 바로 잡아준다.
+    """
+    test_client, fake_openai = client
+    response = test_client.post("/v1/chat/messages", json=request_body())
+
+    assert response.status_code == 200
+    reason_call = fake_openai.responses.calls[0]
+    schema_format = reason_call["text"]["format"]
+    assert schema_format["strict"] is True
+    assert schema_format["schema"]["required"] == ["123"]  # make_track() 기본 track_id
+    assert schema_format["schema"]["additionalProperties"] is False
 
 
 def test_chat_no_match_returns_empty_tracks(
@@ -325,6 +344,53 @@ def test_recommend_forwards_genres_and_min_year_to_search(client, monkeypatch):
 
     assert response.status_code == 200
     assert calls == [{"genres": ["K-Pop"], "min_year": 2020}]
+
+
+def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
+    """검색·이유생성이 이번 턴 원문이 아니라 classify가 재구성한 recommend_query를 쓰는지 확인한다.
+
+    후속 요청("방금 추천한 곡들은 빼고...")은 원문만으론 원래 분위기가 안 담겨 있어서,
+    embed_node/search_node/reason_node가 실수로 state["message"]로 되돌아가면 이 테스트가 잡아준다.
+    """
+    test_client, fake_openai = client
+    resolved_query = "퇴근길에 어울리는 신나는 노래"
+    monkeypatch.setattr(
+        nodes, "classify",
+        lambda client, messages: recommend_classification(recommend_query=resolved_query),
+    )
+
+    embed_calls: list[str] = []
+    monkeypatch.setattr(
+        nodes, "embed_query",
+        lambda embedding_client, message: embed_calls.append(message) or [0.1, 0.2, 0.3],
+    )
+
+    search_calls: list[str] = []
+
+    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None):
+        search_calls.append(message)
+        return [make_track()], {"123": {"lofi": 0.9}}
+
+    monkeypatch.setattr(nodes, "vector_recommendation", fake_vector_recommendation)
+
+    response = test_client.post(
+        "/v1/chat/messages",
+        json=request_body("방금 추천한 곡들은 빼고 다른 곡 3개 추천해줘"),
+    )
+
+    assert response.status_code == 200
+    assert embed_calls == [resolved_query]
+    assert search_calls == [resolved_query]
+
+    # assign_reasons가 실제로 LLM에 보낸 payload도 원문이 아니라 recommend_query여야 한다.
+    reason_call = fake_openai.responses.calls[0]
+    assert json.loads(reason_call["input"])["request"] == resolved_query
+
+    # 최종 답변 생성(stream_answer)도 body.message가 아니라 recommend_query를 받아야 한다.
+    # (한때 main.py가 body.message를 그대로 넘겨서, "이전에 추천된 곡 목록이 없어..."처럼
+    # LLM이 내부 제외 처리를 스스로 검증하려다 헛소리를 하는 문제가 있었다.)
+    answer_call = fake_openai.responses.calls[1]
+    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
 
 
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):

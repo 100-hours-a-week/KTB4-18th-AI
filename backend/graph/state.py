@@ -27,6 +27,7 @@ class RecommendationState(TypedDict, total=False):
     recommend_unsupported_condition: bool
     recommend_genres: list[str] | None
     recommend_min_year: int | None
+    recommend_query: str
     lookup_song: str | None
     lookup_artist: str | None
 
