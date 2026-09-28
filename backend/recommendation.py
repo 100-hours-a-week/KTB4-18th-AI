@@ -43,6 +43,7 @@ class ChatOutcome:
     client: OpenAI | None = None
     tracks: list[Track] | None = None
     text: str | None = None
+    query: str | None = None
 
 
 def _model_unavailable() -> HTTPException:
@@ -263,7 +264,10 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
             return ChatOutcome(kind="static", text=GUIDE_TEXT)
         if not result["recommend_has_enough_info"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_insufficient_info"])
-        return ChatOutcome(kind="recommend", client=client, tracks=result["tracks"])
+        return ChatOutcome(
+            kind="recommend", client=client, tracks=result["tracks"],
+            query=result["recommend_query"],
+        )
 
     if intent == "guide":
         return ChatOutcome(kind="static", text=GUIDE_TEXT)

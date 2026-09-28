@@ -386,6 +386,12 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
     reason_call = fake_openai.responses.calls[0]
     assert json.loads(reason_call["input"])["request"] == resolved_query
 
+    # 최종 답변 생성(stream_answer)도 body.message가 아니라 recommend_query를 받아야 한다.
+    # (한때 main.py가 body.message를 그대로 넘겨서, "이전에 추천된 곡 목록이 없어..."처럼
+    # LLM이 내부 제외 처리를 스스로 검증하려다 헛소리를 하는 문제가 있었다.)
+    answer_call = fake_openai.responses.calls[1]
+    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
+
 
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     """제목+아티스트로 곡이 하나로 좁혀지면 조회 결과 카드와 함께 답변을 스트리밍한다."""
