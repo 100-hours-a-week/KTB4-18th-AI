@@ -6,8 +6,9 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.schemas import Track
-from .models import TrackRow, l2norm
+from db.types import Track
+from .models import TrackRow
+from .vectors import l2norm
 
 
 @dataclass

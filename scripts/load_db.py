@@ -12,8 +12,9 @@ sys.path.insert(0, str(ROOT))
 
 from db.models import (  # noqa: E402
     EMB_DIM, MODEL_VERSION, Base, CorpusStat, SessionLocal, TrackRow,
-    engine, init_db, l2norm,
+    engine, init_db,
 )
+from db.vectors import l2norm  # noqa: E402
 
 OUT = ROOT / "out"
 MODEL_DIR = ROOT / "models"

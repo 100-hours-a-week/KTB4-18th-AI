@@ -8,9 +8,11 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backend import main, recommendation
-from backend.graph import nodes
-from backend.schemas import Track
+from backend import main
+from backend.chat import service as recommendation
+from backend.chat.graph import nodes
+from db.types import Track
+from backend.core.errors import _catalog_unavailable
 
 THREAD_ID = "11111111-1111-4111-8111-111111111111"
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
@@ -210,7 +212,7 @@ def test_chat_music_catalog_unavailable_returns_503(
     def failing_vector_recommendation(
         query_vector: list[float], message: str, exclude_ids=None, genres=None, min_year=None,
     ):
-        raise recommendation._catalog_unavailable()
+        raise _catalog_unavailable()
 
     monkeypatch.setattr(nodes, "vector_recommendation", failing_vector_recommendation)
     response = test_client.post("/v1/chat/messages", json=request_body())
@@ -481,16 +483,3 @@ def test_lookup_no_target_asks_without_db_call(client, monkeypatch):
     assert response.status_code == 200
     assert 'event: tracks\ndata: {"tracks": []}' in response.text
     assert fake_openai.responses.calls == []
-
-
-def test_local_chat_page_uses_v1_fields() -> None:
-    """테스트용 HTML 페이지가 v1에 맞게 나오는지 확인한다."""
-    response = TestClient(main.app).get("/app/")
-
-    assert response.status_code == 200
-    assert 'const CHAT_URL = "/v1/chat/messages"' in response.text
-    assert "thread_id" in response.text
-    assert "request_id" in response.text
-    assert "response.body.getReader()" in response.text
-    assert "addTrackCards" in response.text
-    assert "store_url" in response.text

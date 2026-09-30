@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 from imageio_ffmpeg import get_ffmpeg_exe
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from backend import main, transcriptions as stt
+from backend import main
+from backend.stt import service as stt, audio
 
 
 def audio_wav(seconds=0.1, silent=False):
@@ -153,7 +154,7 @@ def test_seekable_m4a(client, monkeypatch, tmp_path):
 def test_decoder_timeout(client, monkeypatch):
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired("ffmpeg", 15)
-    monkeypatch.setattr(stt.subprocess, "run", timeout)
+    monkeypatch.setattr(audio.subprocess, "run", timeout)
     assert upload(client, audio_wav()).status_code == 415
 
 

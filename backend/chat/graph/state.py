@@ -3,7 +3,8 @@
 import operator
 from typing import Annotated, TypedDict
 
-from backend.schemas import Track, UserContext
+from backend.chat.schemas import UserContext
+from db.types import Track
 
 def _cap_shown_ids(old: list[str], new: list[str]) -> list[str]:
     return (old + new)[-100:]
