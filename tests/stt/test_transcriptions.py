@@ -2,7 +2,7 @@
 
 import base64
 import io
-import math
+import random
 import struct
 import subprocess
 import sys
@@ -19,15 +19,25 @@ from backend import main
 from backend.stt import service as stt, audio
 
 
-def audio_wav(seconds=0.1, silent=False):
+def wav_from_pcm(pcm):
     stream = io.BytesIO()
     with wave.open(stream, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16000)
-        wav.writeframes(b"".join(struct.pack("<h", 0 if silent else int(5000 * math.sin(i / 10)))
-                                 for i in range(int(seconds * 16000))))
+        wav.writeframes(pcm)
     return stream.getvalue()
+
+
+def audio_wav(seconds=None, silent=False):
+    with wave.open(str(Path(__file__).parent / "samples/speech.wav"), "rb") as wav:
+        pcm = wav.readframes(wav.getnframes())
+    if silent:
+        return wav_from_pcm(b"\x00\x00" * int((seconds or 0.1) * 16000))
+    if seconds is not None:
+        size = int(seconds * 16000) * 2
+        pcm = (pcm * (size // len(pcm) + 1))[:size]
+    return wav_from_pcm(pcm)
 
 
 @pytest.fixture
@@ -162,3 +172,48 @@ def test_invalid_provider_json(client, monkeypatch):
     monkeypatch.setattr(stt.httpx, "post", lambda *a, **k: httpx.Response(
         200, text="not json", request=httpx.Request("POST", stt.STT_URL)))
     assert upload(client, audio_wav()).status_code == 503
+
+
+@pytest.mark.parametrize("seconds", [1.38, 3, 5, 10, 60])
+@pytest.mark.parametrize("amplitude", [200, 5000])
+def test_background_noise_does_not_call_provider(client, seconds, amplitude):
+    rng = random.Random(42)
+    pcm = b"".join(struct.pack("<h", rng.randint(-amplitude, amplitude)) for _ in range(int(16000 * seconds)))
+    response = upload(client, wav_from_pcm(pcm))
+    assert response.status_code == 400
+    assert response.json()["details"]["reason"] == "NO_SPEECH_DETECTED"
+    assert "다시 녹음" in response.json()["message"]
+
+
+def test_ten_seconds_digital_silence_does_not_call_provider(client):
+    response = upload(client, audio_wav(10, silent=True))
+    assert response.status_code == 400
+    assert response.json()["details"]["reason"] == "EMPTY_AUDIO"
+
+
+def test_vad_failure_does_not_call_provider(client, monkeypatch):
+    def unavailable(*args):
+        raise RuntimeError("private VAD runtime detail")
+    monkeypatch.setattr(audio, "SileroVAD", unavailable)
+    response = upload(client, audio_wav())
+    assert response.status_code == 503
+    assert "private VAD" not in response.text
+
+
+def test_quiet_speech_with_noise_is_preserved(client, monkeypatch):
+    with wave.open(io.BytesIO(audio_wav()), "rb") as wav:
+        original = wav.readframes(wav.getnframes())
+    rng = random.Random(42)
+    quiet = b"".join(struct.pack("<h", int(sample / 10) + rng.randint(-50, 50))
+                     for (sample,) in struct.iter_unpack("<h", original))
+    mock_response(monkeypatch, {"text": "감사합니다."})
+    # 유효한 발화의 문구는 블랙리스트로 지우지 않는다.
+    assert upload(client, wav_from_pcm(quiet)).json() == {"transcript": "감사합니다."}
+
+
+def test_brief_sound_and_incomplete_frame_are_rejected(client):
+    with wave.open(io.BytesIO(audio_wav()), "rb") as wav:
+        brief = wav.readframes(1600)
+    assert not audio._has_speech(brief)
+    assert not audio._has_speech(b"\x01\x00" * 161)
+    assert upload(client, wav_from_pcm(brief)).status_code == 400
