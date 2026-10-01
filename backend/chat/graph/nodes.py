@@ -4,16 +4,13 @@
 
 from langchain_core.runnables import RunnableConfig
 
-from backend.graph.state import RecommendationState
-from backend.schemas import Track
-from backend.recommendation import (
-    assign_reasons,
-    classify,
-    embed_query,
-    get_embedding_client,
-    lookup_tracks_db,
-    vector_recommendation,
-)
+from backend.chat.graph.state import RecommendationState
+from db.types import Track
+from backend.recommendation.reasons import assign_reasons
+from backend.recommendation.intent import classify
+from backend.recommendation.embedding import embed_query
+from backend.providers.openrouter import get_embedding_client
+from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
 
 
 def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
@@ -23,10 +20,15 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
 
 
 def embed_node(state: RecommendationState) -> dict:
-    """사용자 메시지를 검색용 벡터로 변환한다."""
+    """classify_node가 재구성한 recommend_query를 검색용 벡터로 변환한다.
+
+    NOTE: state["message"](이번 턴 원문)가 아니라 recommend_query를 쓴다. 후속
+    요청("신나게 다른 곡")은 이번 턴 메시지만으론 상황(원래 분위기)이 안 담겨
+    있어서, classify_node가 대화 맥락을 합쳐 재구성해준 문장을 써야 한다.
+    """
 
     embedding_client = get_embedding_client()
-    query_vector = embed_query(embedding_client, state["message"])
+    query_vector = embed_query(embedding_client, state["recommend_query"])
     return {"query_vector": query_vector}
 
 
@@ -35,7 +37,7 @@ def search_node(state: RecommendationState) -> dict:
     classify_node가 뽑은 genres/min_year를 메타데이터 조건으로 같이 넘긴다."""
     exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
     tracks, mood_tags = vector_recommendation(
-        state["query_vector"], state["message"], exclude_ids=exclude_ids,
+        state["query_vector"], state["recommend_query"], exclude_ids=exclude_ids,
         genres=state.get("recommend_genres"), min_year=state.get("recommend_min_year"),
     )
     return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
@@ -45,7 +47,7 @@ def reason_node(state: RecommendationState, config: RunnableConfig) -> dict:
     """검색된 곡마다 추천 이유를 채운다."""
 
     tracks = state["tracks"]
-    assign_reasons(config["configurable"]["client"], state["message"], tracks, state["mood_tags"])
+    assign_reasons(config["configurable"]["client"], state["recommend_query"], tracks, state["mood_tags"])
     return {"tracks": tracks}
 
 

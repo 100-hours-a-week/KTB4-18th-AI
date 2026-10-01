@@ -6,14 +6,14 @@
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from backend.graph.nodes import (
+from backend.chat.graph.nodes import (
     classify_node,
     embed_node,
     lookup_node,
     reason_node,
     search_node,
 )
-from backend.graph.state import RecommendationState
+from backend.chat.graph.state import RecommendationState
 
 # NOTE: 채팅방을 나가면 대화 기억도 사라져도 되는 요구사항(장기 저장 불필요)이라
 # DB 기반 checkpointer 대신 프로세스 메모리에만 저장하는 InMemorySaver를 쓴다.
