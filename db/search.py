@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from db.types import Track
@@ -108,7 +108,13 @@ def lookup(
         stmt = stmt.where(TrackRow.artist.op("~*")(rf"\y{re.escape(artist)}\y"))
     if exclude_ids:
         stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
-    stmt = stmt.order_by(TrackRow.release_date.desc()).limit(limit * 6)
+    # NOTE: 제목은 부분 일치라 "butter"가 "butterflies" 같은 최신곡에 밀려 BTS의
+    # "Butter"가 잘리는 문제가 있어, 제목이 정확히 같은 곡을 최신순보다 먼저 둔다.
+    order = [TrackRow.release_date.desc()]
+    if song_title:
+        exact = case((func.lower(TrackRow.title) == song_title.lower(), 0), else_=1)
+        order.insert(0, exact)
+    stmt = stmt.order_by(*order).limit(limit * 6)
     rows = session.execute(stmt).scalars().all()
 
     seen, unique = set(), []

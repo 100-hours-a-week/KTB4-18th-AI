@@ -114,16 +114,28 @@ def classify_instructions(genres: list[str]) -> str:
         "\"방금 추천한 곡 빼고\", \"다른 곡으로\" 같은 제외·재요청 지시는 이미 "
         "따로 처리되니 이 문장에는 넣지 마세요.\n\n"
         "intent가 lookup일 때 추가로 채울 필드:\n"
-        "- lookup_song: 조회 대상 곡 제목. 모르면 null.\n"
-        "- lookup_artist: 조회 대상 아티스트명. 한국 아티스트라면 우리 카탈로그가 "
-        "쓰는 영문/로마자 표기로 바꿔서 적으세요(예: 아이유→IU, 방탄소년단→BTS, "
-        "아이브→IVE, 잔나비→Jannabi). 잘 모르는 아티스트면 원문 그대로 적으세요. "
-        "모르면 null.\n"
-        "  (제목과 아티스트 중 아는 것만 채우면 됩니다. 대상 자체가 너무 모호하면 "
-        "둘 다 null로 두세요.)\n\n"
+        "- lookup_song: 조회 대상 곡 제목. 사용자가 말한 제목을 그대로 적으세요"
+        "(한글이면 한글 그대로). 제목 언급이 없으면 null.\n"
+        "- lookup_song_alt: lookup_song이 한국어 제목이고, 그 곡이 음원 사이트에 "
+        "공식 영문/로마자 제목으로도 등록돼 있다는 걸 알면 그 제목(예: 악뮤 "
+        "\"사람들이 움직이는 게\"→\"How People Move\"). 모르거나 lookup_song이 이미 "
+        "영문이면 null.\n"
+        "- lookup_artist: 조회 대상 아티스트명. 우리 카탈로그는 아티스트명이 영문/"
+        "로마자 표기라, 한글로 적지 말고 공식 영문/로마자 표기로 적으세요(예: "
+        "아이유→IU, 방탄소년단→BTS, 아이브→IVE, 잔나비→Jannabi, 볼빨간사춘기→BOL4). "
+        "공식 표기를 모르면 로마자로 옮겨 적으세요. 아티스트 언급이 없으면 null.\n"
+        "  (제목과 아티스트 중 언급된 것만 채우면 됩니다. 곡 제목·아티스트명이 "
+        "하나도 없이 \"그 노래\"처럼 지시어만 있으면 둘 다 null로 두세요.)\n"
+        "  사용자가 말하지 않은 아티스트·제목을 알고 있는 지식으로 추측해 채우지 "
+        "마세요. 곡 제목만 말했으면 그 곡을 부른 아티스트를 알더라도 lookup_artist는 "
+        "null로 두고, 그 제목을 아티스트로 바꿔 적지도 마세요(예: \"dynamite 노래 "
+        "추천해줘\" → lookup_song=\"dynamite\", lookup_artist=null). \"X 노래\"에서 X가 "
+        "곡 제목인지 아티스트인지 헷갈리면, 둘 중 더 그럴듯한 칸에 X를 그대로 "
+        "적으세요.\n\n"
         "intent가 recommend/lookup이 아니면 recommend_has_enough_info/"
         "recommend_unsupported_condition/recommend_genres/recommend_min_year/"
-        "lookup_song/lookup_artist는 각각 false/false/null/null/null/null로 "
+        "lookup_song/lookup_song_alt/lookup_artist는 각각 "
+        "false/false/null/null/null/null/null로 "
         "채우세요. recommend_query는 intent와 상관없이 위 방식대로 항상 채우거나, "
         "재구성할 필요가 없으면 이번 메시지 원문을 그대로 넣으세요."
     )
@@ -163,6 +175,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "recommend_min_year": {"type": ["integer", "null"]},
                             "recommend_query": {"type": "string"},
                             "lookup_song": {"type": ["string", "null"]},
+                            "lookup_song_alt": {"type": ["string", "null"]},
                             "lookup_artist": {"type": ["string", "null"]},
                         },
                         "required": [
@@ -173,6 +186,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "recommend_min_year",
                             "recommend_query",
                             "lookup_song",
+                            "lookup_song_alt",
                             "lookup_artist",
                         ],
                         "additionalProperties": False,

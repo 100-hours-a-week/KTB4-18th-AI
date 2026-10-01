@@ -29,6 +29,22 @@ def test_search_result_and_filters_without_database(monkeypatch):
     assert "release_date" in sql and "genre" in sql and "NOT IN" in sql
 
 
+def test_lookup_orders_exact_title_match_before_release_date(monkeypatch):
+    """제목 부분 일치 결과("butterflies")가 최신이어도 정확히 같은 제목("Butter")이 먼저 온다."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+    from db.search import lookup
+
+    class Session:
+        def execute(self, stmt):
+            self.statement = stmt
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    session = Session()
+    lookup(session, song_title="Butter")
+    sql = str(session.statement).lower()
+    assert sql.index("case") < sql.index("release_date desc")
+
+
 def test_lookup_spreads_results_across_albums(monkeypatch):
     """최신 앨범 하나가 결과를 독차지하지 않도록 앨범당 1곡씩 먼저 고르고,
     모자라면 남은 곡을 최신순으로 채우며 최종 순서는 최신순을 유지한다."""

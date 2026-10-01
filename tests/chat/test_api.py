@@ -37,6 +37,7 @@ def classification(intent: str, **overrides: object) -> dict:
         "recommend_min_year": None,
         "recommend_query": "퇴근길 음악",
         "lookup_song": None,
+        "lookup_song_alt": None,
         "lookup_artist": None,
     }
     base.update(overrides)
@@ -497,6 +498,33 @@ def test_lookup_artist_only_not_found_retries_as_song_title(client, monkeypatch)
     assert calls == [(None, "COIN"), ("COIN", None)]
     assert '"title": "Coin"' in response.text
     assert recommendation.NOT_FOUND_TEXT not in response.text
+
+
+def test_lookup_korean_title_not_found_retries_with_alt_title(client, monkeypatch):
+    """한글 원제로 못 찾으면 classify가 준 공식 영문 제목으로 다시 조회한다."""
+    test_client, fake_openai = client
+    monkeypatch.setattr(
+        nodes, "classify",
+        lambda client, messages: classification(
+            "lookup", lookup_song="사람들이 움직이는 게",
+            lookup_song_alt="How People Move", lookup_artist="AKMU",
+        ),
+    )
+
+    calls: list[tuple] = []
+
+    def fake_lookup(song_title=None, artist=None, exclude_ids=None):
+        calls.append((song_title, artist))
+        if song_title == "How People Move":
+            return [make_track_row(track_id=8, title="How People Move", artist="AKMU")]
+        return []
+
+    monkeypatch.setattr(nodes, "lookup_tracks_db", fake_lookup)
+    response = test_client.post("/v1/chat/messages", json=request_body("악뮤 사람들이 움직이는 게"))
+
+    assert response.status_code == 200
+    assert calls == [("사람들이 움직이는 게", "AKMU"), ("How People Move", "AKMU")]
+    assert '"title": "How People Move"' in response.text
 
 
 def test_lookup_no_target_asks_without_db_call(client, monkeypatch):
