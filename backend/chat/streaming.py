@@ -25,6 +25,7 @@ def stream_answer(
     user_context: UserContext | None,
     has_non_music_request: bool = False,
     response_style: str | None = None,
+    requested_count: int | None = None,
 ) -> Iterator[str]:
     """추천 문장 조각과 완성된 추천곡을 순서대로 전송한다."""
 
@@ -40,7 +41,9 @@ def stream_answer(
         stream = client.responses.create(
             model=os.environ["LLM_MODEL"],
             instructions=answer_instructions(),
-            input=answer_input(message, tracks, user_context, has_non_music_request, response_style),
+            input=answer_input(
+                message, tracks, user_context, has_non_music_request, response_style, requested_count,
+            ),
             stream=True,
         )
 
@@ -79,6 +82,7 @@ def stream_lookup_answer(
     user_context: UserContext | None,
     has_non_music_request: bool = False,
     response_style: str | None = None,
+    requested_count: int | None = None,
 ) -> Iterator[str]:
     """조회 결과 문장과 조회된 곡 카드를 순서대로 전송한다.
 
@@ -93,7 +97,9 @@ def stream_lookup_answer(
         stream = client.responses.create(
             model=os.environ["LLM_MODEL"],
             instructions=lookup_answer_instructions(),
-            input=lookup_answer_input(message, tracks, user_context, has_non_music_request, response_style),
+            input=lookup_answer_input(
+                message, tracks, user_context, has_non_music_request, response_style, requested_count,
+            ),
             stream=True,
         )
 

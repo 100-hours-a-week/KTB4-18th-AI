@@ -39,6 +39,7 @@ def classification(intent: str, **overrides: object) -> dict:
         "lookup_song": None,
         "lookup_song_alt": None,
         "lookup_artist": None,
+        "requested_count": None,
         "has_non_music_request": False,
         "response_style": None,
     }
@@ -425,6 +426,28 @@ def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch
     assert "사용자 요청: 퇴근길에 듣기 좋은 노래" in answer_input
     assert "음악 외 요청 포함: 예" in answer_input
     assert "요청 말투: 딸에게 말하는 아빠 말투" in answer_input
+
+
+def test_recommend_passes_requested_and_card_counts_to_answer(client, monkeypatch):
+    """요청한 곡 수와 실제 카드 수를 LLM이 세게 두지 않고 숫자로 넘겨, 채팅이 카드와 어긋나지 않게 한다."""
+    test_client, fake_openai = client
+    monkeypatch.setattr(
+        nodes, "classify",
+        lambda client, messages: recommend_classification(recommend_query="잔잔한 노래", requested_count=2),
+    )
+    monkeypatch.setattr(
+        nodes, "vector_recommendation",
+        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None: (
+            [make_track(track_id=str(i)) for i in range(5)], {},
+        ),
+    )
+
+    response = test_client.post("/v1/chat/messages", json=request_body("잔잔한 노래 2곡 추천해줘"))
+
+    assert response.status_code == 200
+    answer_input = fake_openai.responses.calls[1]["input"]
+    assert "사용자가 요청한 곡 수: 2" in answer_input
+    assert "화면에 카드로 보여지는 곡 수: 5" in answer_input
 
 
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):

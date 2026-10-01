@@ -32,6 +32,7 @@ class RecommendationState(TypedDict, total=False):
     lookup_song: str | None
     lookup_song_alt: str | None
     lookup_artist: str | None
+    requested_count: int | None
     has_non_music_request: bool
     response_style: str | None
 

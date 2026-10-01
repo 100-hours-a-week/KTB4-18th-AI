@@ -49,7 +49,7 @@ def chat(body: ChatRequest) -> StreamingResponse:
         return StreamingResponse(
             stream_lookup_answer(
                 result.client, result.query, result.tracks, body.user_context,
-                result.has_non_music_request, result.response_style,
+                result.has_non_music_request, result.response_style, result.requested_count,
             ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -58,7 +58,7 @@ def chat(body: ChatRequest) -> StreamingResponse:
     return StreamingResponse(
         stream_answer(
             result.client, result.query, result.tracks, body.user_context,
-            result.has_non_music_request, result.response_style,
+            result.has_non_music_request, result.response_style, result.requested_count,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

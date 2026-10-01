@@ -111,7 +111,10 @@ def classify_instructions(genres: list[str]) -> str:
         "- recommend_min_year: \"최신곡\", \"2020년 이후\" 같은 연도 하한이 있으면 "
         "정수로, 없으면 null.\n"
         "- recommend_query: 검색·이유생성에 쓸, 이번 요청을 독립적으로 이해할 수 "
-        "있는 한국어 문장 하나로 재구성하세요. conversation 앞부분에서 이미 나온 "
+        "있는 한국어 문장 하나로 재구성하세요. 요청 문장이 아니라 원하는 음악을 "
+        "묘사하는 명사구로 쓰고(예: \"퇴근길에 듣기 좋은 잔잔한 노래\"), \"추천해줘\", "
+        "\"알려줘\" 같은 요청 표현과 곡 개수는 넣지 마세요(곡 개수는 requested_count로 "
+        "따로 받습니다). conversation 앞부분에서 이미 나온 "
         "분위기·상황을 이번 메시지가 그대로 이어받는 거라면 그 내용을 이번 문장에 "
         "합쳐서 쓰고(예: 이전에 \"퇴근길에 듣기 좋은 잔잔한 노래\"였고 이번 메시지가 "
         "\"좀 더 신나게\"면 → \"퇴근길에 듣기 좋은 신나는 노래\"), 이번 메시지 "
@@ -146,6 +149,8 @@ def classify_instructions(genres: list[str]) -> str:
         "곡 제목인지 아티스트인지 헷갈리면, 둘 중 더 그럴듯한 칸에 X를 그대로 "
         "적으세요.\n\n"
         "intent와 상관없이 항상 채울 필드:\n"
+        "- requested_count: 사용자가 원하는 곡 개수를 말했으면 그 정수(예: \"2곡\" → 2, "
+        "\"한 곡만\" → 1), 말하지 않았으면 null.\n"
         "- has_non_music_request: 음악 추천·조회 외에 다른 작업(레시피, 메뉴 "
         "고르기, 일반 질문 등)을 함께 요청하면 true, 아니면 false. 단, \"냉면 "
         "먹으면서 들을 노래\"처럼 음악을 고르기 위한 상황 설명은 해당하지 않습니다.\n"
@@ -198,6 +203,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "lookup_song": {"type": ["string", "null"]},
                             "lookup_song_alt": {"type": ["string", "null"]},
                             "lookup_artist": {"type": ["string", "null"]},
+                            "requested_count": {"type": ["integer", "null"]},
                             "has_non_music_request": {"type": "boolean"},
                             "response_style": {"type": ["string", "null"]},
                         },
@@ -211,6 +217,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "lookup_song",
                             "lookup_song_alt",
                             "lookup_artist",
+                            "requested_count",
                             "has_non_music_request",
                             "response_style",
                         ],
