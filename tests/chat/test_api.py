@@ -262,7 +262,7 @@ def test_health_does_not_call_external_services() -> None:
     ("intent", "expected_text"),
     [
         ("guide", recommendation.GUIDE_TEXT),
-        ("clarify", recommendation.CLARIFY_TEXT["intent_unclear"]),
+        ("clarify", recommendation.CLARIFY_TEXT["missing_reference"]),
         ("out_of_scope", recommendation.OUT_OF_SCOPE_TEXT),
     ],
 )
@@ -286,8 +286,8 @@ def test_static_intents_skip_search_and_embedding(client, monkeypatch, intent, e
     assert fake_openai.responses.calls == []
 
 
-def test_recommend_unsupported_condition_returns_guide_text(client, monkeypatch):
-    """필수 조건을 지원 못 하면 검색 없이 바로 안내 문구로 끝난다."""
+def test_recommend_unsupported_condition_returns_unsupported_text(client, monkeypatch):
+    """필수 조건을 지원 못 하면 검색 없이 바로 미지원 안내 문구로 끝난다."""
     test_client, fake_openai = client
     monkeypatch.setattr(
         nodes, "classify",
@@ -302,7 +302,7 @@ def test_recommend_unsupported_condition_returns_guide_text(client, monkeypatch)
     response = test_client.post("/v1/chat/messages", json=request_body("이 아티스트 신곡만 추천해줘"))
 
     assert response.status_code == 200
-    assert recommendation.GUIDE_TEXT in response.text
+    assert recommendation.CLARIFY_TEXT["recommend_unsupported_condition"] in response.text
     assert fake_openai.responses.calls == []
 
 
