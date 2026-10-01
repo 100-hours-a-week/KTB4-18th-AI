@@ -111,16 +111,27 @@ def lookup(
     stmt = stmt.order_by(TrackRow.release_date.desc()).limit(limit * 6)
     rows = session.execute(stmt).scalars().all()
 
-    seen, out = set(), []
+    seen, unique = set(), []
     for row in rows:
         key = (row.artist.lower(), row.title.lower())
         if key in seen:
             continue
         seen.add(key)
-        out.append(row)
-        if len(out) >= limit:
-            break
-    return out
+        unique.append(row)
+
+    # NOTE: 최신순 그대로 자르면 최근 정규 앨범 하나가 결과를 다 차지해서, 앨범당
+    # 1곡씩 먼저 고르고 모자라면 남은 곡을 최신순으로 채운다. 앨범이 적은
+    # 아티스트도 limit만큼은 채워지도록 앨범당 상한을 두지 않았다.
+    picked_albums, first, rest = set(), [], []
+    for row in unique:
+        album = (row.artist.lower(), (row.album or "").lower())
+        if row.album and album in picked_albums:
+            rest.append(row)
+            continue
+        picked_albums.add(album)
+        first.append(row)
+    chosen = {id(row) for row in first[:limit] + rest[:max(0, limit - len(first))]}
+    return [row for row in unique if id(row) in chosen]
 
 
 def known_genres(session: Session) -> list[str]:

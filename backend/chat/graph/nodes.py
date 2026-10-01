@@ -74,6 +74,13 @@ def lookup_node(state: RecommendationState) -> dict:
         exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
 
     rows = lookup_tracks_db(song_title=song, artist=artist, exclude_ids=exclude_ids)
+
+    # NOTE: "coin 노래"처럼 이름 하나만 주면 classify가 곡 제목(IU의 Coin)을 동명의
+    # 아티스트(COIN)로 읽는 등 어느 쪽인지 갈리는 경우가 있어, 하나만 채워졌는데
+    # 결과가 없으면 같은 이름을 반대 필드로 한 번 더 조회한다.
+    if not rows and not (song and artist):
+        rows = lookup_tracks_db(song_title=artist, artist=song, exclude_ids=exclude_ids)
+
     if not rows:
         return {"lookup_status": "not_found"}
 

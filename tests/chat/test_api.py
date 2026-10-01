@@ -475,6 +475,30 @@ def test_lookup_not_found_returns_not_found_text(client, monkeypatch):
     assert fake_openai.responses.calls == []
 
 
+def test_lookup_artist_only_not_found_retries_as_song_title(client, monkeypatch):
+    """"coin 노래"를 classify가 아티스트(COIN)로 읽어도, 결과가 없으면 같은 이름을
+    곡 제목으로 다시 조회해 IU의 Coin을 찾는다."""
+    test_client, fake_openai = client
+    monkeypatch.setattr(
+        nodes, "classify",
+        lambda client, messages: classification("lookup", lookup_artist="COIN"),
+    )
+
+    calls: list[tuple] = []
+
+    def fake_lookup(song_title=None, artist=None, exclude_ids=None):
+        calls.append((song_title, artist))
+        return [make_track_row(track_id=7, title="Coin", artist="IU")] if song_title == "COIN" else []
+
+    monkeypatch.setattr(nodes, "lookup_tracks_db", fake_lookup)
+    response = test_client.post("/v1/chat/messages", json=request_body("coin 노래 추천해줄 수 있어?"))
+
+    assert response.status_code == 200
+    assert calls == [(None, "COIN"), ("COIN", None)]
+    assert '"title": "Coin"' in response.text
+    assert recommendation.NOT_FOUND_TEXT not in response.text
+
+
 def test_lookup_no_target_asks_without_db_call(client, monkeypatch):
     """제목·아티스트를 아예 못 뽑았으면 DB 조회 없이 바로 되묻는다."""
     test_client, fake_openai = client
