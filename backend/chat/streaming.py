@@ -70,7 +70,12 @@ def stream_answer(
         yield sse("error", {"detail": error_message})
 
 
-def stream_lookup_answer(client: OpenAI, message: str, tracks: list[Track]) -> Iterator[str]:
+def stream_lookup_answer(
+    client: OpenAI,
+    message: str,
+    tracks: list[Track],
+    user_context: UserContext | None,
+) -> Iterator[str]:
     """조회 결과 문장과 조회된 곡 카드를 순서대로 전송한다.
 
     NOTE: stream_answer와 스트리밍 루프가 거의 동일하지만, 나중에 트랙을
@@ -84,7 +89,7 @@ def stream_lookup_answer(client: OpenAI, message: str, tracks: list[Track]) -> I
         stream = client.responses.create(
             model=os.environ["LLM_MODEL"],
             instructions=lookup_answer_instructions(),
-            input=lookup_answer_input(message, tracks),
+            input=lookup_answer_input(message, tracks, user_context),
             stream=True,
         )
 

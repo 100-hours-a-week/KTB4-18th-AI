@@ -90,7 +90,10 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     if intent == "lookup":
         status = result["lookup_status"]
         if status == "found":
-            return ChatOutcome(kind="lookup", client=client, tracks=result["lookup_tracks"])
+            return ChatOutcome(
+                kind="lookup", client=client, tracks=result["lookup_tracks"],
+                query=result["recommend_query"],
+            )
         if status == "ambiguous":
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["lookup_ambiguous"])
         return ChatOutcome(kind="static", text=NOT_FOUND_TEXT)

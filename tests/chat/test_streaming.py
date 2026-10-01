@@ -24,6 +24,6 @@ def test_failed_streams_emit_error_without_done(monkeypatch):
     track = Track(track_id="1", title="song", artist="artist", artwork_url=None,
                   preview_url=None, reason="reason")
     for stream in (stream_answer(client, "request", [track], None),
-                   stream_lookup_answer(client, "request", [track])):
+                   stream_lookup_answer(client, "request", [track], None)):
         events = list(stream)
         assert [event.split("\n", 1)[0] for event in events] == ["event: text", "event: error"]

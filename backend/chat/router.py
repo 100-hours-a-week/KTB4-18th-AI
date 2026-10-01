@@ -47,7 +47,7 @@ def chat(body: ChatRequest) -> StreamingResponse:
 
     if result.kind == "lookup":
         return StreamingResponse(
-            stream_lookup_answer(result.client, body.message, result.tracks),
+            stream_lookup_answer(result.client, result.query, result.tracks, body.user_context),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

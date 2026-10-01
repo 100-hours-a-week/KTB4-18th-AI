@@ -398,9 +398,12 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     """제목+아티스트로 곡이 하나로 좁혀지면 조회 결과 카드와 함께 답변을 스트리밍한다."""
     test_client, fake_openai = client
+    resolved_query = "BTS의 Dynamite"
     monkeypatch.setattr(
         nodes, "classify",
-        lambda client, messages: classification("lookup", lookup_song="Dynamite", lookup_artist="BTS"),
+        lambda client, messages: classification(
+            "lookup", lookup_song="Dynamite", lookup_artist="BTS", recommend_query=resolved_query,
+        ),
     )
 
     def unexpected(*args, **kwargs):
@@ -413,12 +416,16 @@ def test_lookup_found_streams_lookup_answer(client, monkeypatch):
             make_track_row(track_id=1, title="Dynamite", artist="BTS")
         ],
     )
-    response = test_client.post("/v1/chat/messages", json=request_body("Dynamite BTS 언제 나온 곡이야?"))
+    response = test_client.post("/v1/chat/messages", json=request_body("Dynamite BTS 노래 보여줘"))
 
     assert response.status_code == 200
     assert "event: tracks" in response.text
     assert '"artist": "BTS"' in response.text
     assert "event: done" in response.text
+    # 최종 답변 생성(stream_lookup_answer)도 recommend처럼 body.message가 아니라
+    # classify가 재구성한 recommend_query를 받아야 한다.
+    answer_call = fake_openai.responses.calls[0]
+    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
 
 
 def test_lookup_title_only_multiple_artists_are_all_shown_as_found(client, monkeypatch):
