@@ -48,6 +48,8 @@ class ChatOutcome:
     tracks: list[Track] | None = None
     text: str | None = None
     query: str | None = None
+    has_non_music_request: bool = False
+    response_style: str | None = None
 
 
 def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
@@ -79,6 +81,8 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         return ChatOutcome(
             kind="recommend", client=client, tracks=result["tracks"],
             query=result["recommend_query"],
+            has_non_music_request=result["has_non_music_request"],
+            response_style=result["response_style"],
         )
 
     if intent == "guide":
@@ -93,6 +97,8 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
             return ChatOutcome(
                 kind="lookup", client=client, tracks=result["lookup_tracks"],
                 query=result["recommend_query"],
+                has_non_music_request=result["has_non_music_request"],
+                response_style=result["response_style"],
             )
         if status == "ambiguous":
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["lookup_ambiguous"])

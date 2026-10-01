@@ -69,7 +69,12 @@ def classify_instructions(genres: list[str]) -> str:
         "(예: \"이 아티스트 사람들이 잘 모르는 곡만\", \"덜 알려진 곡으로\").\n"
         "- out_of_scope: 음악 추천·조회와 무관한 요청. 인사말·잡담·다른 주제 "
         "질문은 물론, \"12345\"처럼 의미를 파악할 수 없는 입력도 여기 "
-        "포함됩니다.\n\n"
+        "포함됩니다. 음악 외 요청이 섞여 있어도 음악 추천·조회 부분이 있으면 "
+        "out_of_scope가 아니라 그 음악 부분을 기준으로 분류하세요(예: \"갈비찜 "
+        "레시피 알려주고 뉴진스 노래 추천해줘\" → lookup). 음악 외 요청의 결과를 "
+        "가리키는 말(예: \"오늘 뭐 먹을지 골라주고 그 음식에 어울리는 노래\"의 \"그 "
+        "음식\")은 이전 대화를 참조하는 게 아니므로 clarify로 보내지 말고, 정해진 "
+        "부분만으로 판단하세요.\n\n"
         "conversation 필드는 이 대화방의 메시지를 오래된 순서로 담고 있고, "
         "마지막 항목이 이번에 분류할 요청입니다. 앞의 메시지들은 '이 곡과 "
         "비슷한 노래' 같은 지시어를 이해하기 위한 맥락으로만 참고하세요.\n\n"
@@ -112,7 +117,15 @@ def classify_instructions(genres: list[str]) -> str:
         "\"좀 더 신나게\"면 → \"퇴근길에 듣기 좋은 신나는 노래\"), 이번 메시지 "
         "자체에 분위기·상황이 다 들어있다면 그걸 그대로 정리해서 쓰면 됩니다. "
         "\"방금 추천한 곡 빼고\", \"다른 곡으로\" 같은 제외·재요청 지시는 이미 "
-        "따로 처리되니 이 문장에는 넣지 마세요.\n\n"
+        "따로 처리되니 이 문장에는 넣지 마세요. 다음도 이 문장에 넣지 마세요:\n"
+        "  · 말투·호칭·응답 형식·응답 언어에 대한 지시(예: \"사투리로\", \"아빠 "
+        "말투로\", \"일본어로 말해줘\"). 단 \"일본 노래\"처럼 곡 자체에 대한 조건은 "
+        "남기세요.\n"
+        "  · 음악과 무관한 요청 부분(예: \"갈비찜 레시피 알려주고\", \"마들렌이랑 "
+        "크로와상 중에 골라주고\")\n"
+        "  · 사용자가 주지 않은 조건을 새로 지어낸 것. 가리키는 대상이 정해지지 "
+        "않았으면(예: \"오늘 먹을 음식에 어울리는 노래\"인데 음식이 정해지지 않음) "
+        "임의로 채우지 말고 \"식사하면서 듣기 좋은 노래\"처럼 정해진 부분만 쓰세요.\n\n"
         "intent가 lookup일 때 추가로 채울 필드:\n"
         "- lookup_song: 조회 대상 곡 제목. 사용자가 말한 제목을 그대로 적으세요"
         "(한글이면 한글 그대로). 제목 언급이 없으면 null.\n"
@@ -132,6 +145,14 @@ def classify_instructions(genres: list[str]) -> str:
         "추천해줘\" → lookup_song=\"dynamite\", lookup_artist=null). \"X 노래\"에서 X가 "
         "곡 제목인지 아티스트인지 헷갈리면, 둘 중 더 그럴듯한 칸에 X를 그대로 "
         "적으세요.\n\n"
+        "intent와 상관없이 항상 채울 필드:\n"
+        "- has_non_music_request: 음악 추천·조회 외에 다른 작업(레시피, 메뉴 "
+        "고르기, 일반 질문 등)을 함께 요청하면 true, 아니면 false. 단, \"냉면 "
+        "먹으면서 들을 노래\"처럼 음악을 고르기 위한 상황 설명은 해당하지 않습니다.\n"
+        "- response_style: 답변 말투·호칭·관계 설정에 대한 요청이 있으면 짧게 "
+        "적으세요(예: \"경상도 사투리\", \"딸에게 말하는 아빠 말투\", \"친구처럼 "
+        "반말\"). 응답 언어를 바꿔 달라는 요청(예: \"일본어로 말해줘\")은 넣지 "
+        "마세요. 없으면 null.\n\n"
         "intent가 recommend/lookup이 아니면 recommend_has_enough_info/"
         "recommend_unsupported_condition/recommend_genres/recommend_min_year/"
         "lookup_song/lookup_song_alt/lookup_artist는 각각 "
@@ -177,6 +198,8 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "lookup_song": {"type": ["string", "null"]},
                             "lookup_song_alt": {"type": ["string", "null"]},
                             "lookup_artist": {"type": ["string", "null"]},
+                            "has_non_music_request": {"type": "boolean"},
+                            "response_style": {"type": ["string", "null"]},
                         },
                         "required": [
                             "intent",
@@ -188,6 +211,8 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "lookup_song",
                             "lookup_song_alt",
                             "lookup_artist",
+                            "has_non_music_request",
+                            "response_style",
                         ],
                         "additionalProperties": False,
                     },

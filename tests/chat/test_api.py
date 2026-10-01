@@ -39,6 +39,8 @@ def classification(intent: str, **overrides: object) -> dict:
         "lookup_song": None,
         "lookup_song_alt": None,
         "lookup_artist": None,
+        "has_non_music_request": False,
+        "response_style": None,
     }
     base.update(overrides)
     return base
@@ -394,6 +396,35 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
     # LLM이 내부 제외 처리를 스스로 검증하려다 헛소리를 하는 문제가 있었다.)
     answer_call = fake_openai.responses.calls[1]
     assert f"사용자 요청: {resolved_query}" in answer_call["input"]
+
+
+def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch):
+    """음악 외 요청 여부와 요청 말투는 recommend_query에서 빠지는 대신 최종 답변 입력으로 따로 전달된다."""
+    test_client, fake_openai = client
+    monkeypatch.setattr(
+        nodes, "classify",
+        lambda client, messages: recommend_classification(
+            recommend_query="퇴근길에 듣기 좋은 노래",
+            has_non_music_request=True, response_style="딸에게 말하는 아빠 말투",
+        ),
+    )
+    monkeypatch.setattr(nodes, "embed_query", lambda embedding_client, message: [0.1, 0.2, 0.3])
+    monkeypatch.setattr(
+        nodes, "vector_recommendation",
+        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None:
+            ([make_track()], {"123": {"lofi": 0.9}}),
+    )
+
+    response = test_client.post(
+        "/v1/chat/messages",
+        json=request_body("갈비찜 레시피 알려주고 아빠말투로 딸래미 퇴근길 노래 추천해주라"),
+    )
+
+    assert response.status_code == 200
+    answer_input = fake_openai.responses.calls[1]["input"]
+    assert "사용자 요청: 퇴근길에 듣기 좋은 노래" in answer_input
+    assert "음악 외 요청 포함: 예" in answer_input
+    assert "요청 말투: 딸에게 말하는 아빠 말투" in answer_input
 
 
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):

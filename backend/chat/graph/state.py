@@ -32,6 +32,8 @@ class RecommendationState(TypedDict, total=False):
     lookup_song: str | None
     lookup_song_alt: str | None
     lookup_artist: str | None
+    has_non_music_request: bool
+    response_style: str | None
 
     # ── embed_node가 채움 ──
     query_vector: list[float]
