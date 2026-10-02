@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.3.5",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.20",
+    "silero-vad-lite==0.2.1",
     "sqlalchemy",
     "uvicorn>=0.52.4",
 ]

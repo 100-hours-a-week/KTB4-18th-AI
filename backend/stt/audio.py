@@ -1,17 +1,53 @@
 """음성 MIME·FFmpeg·길이 검사."""
 
 import io
+import logging
 import subprocess
 import tempfile
 import wave
 from pathlib import Path
 
+import numpy as np
 from imageio_ffmpeg import get_ffmpeg_exe
+from silero_vad_lite import SileroVAD
 from backend.core.errors import _error, _unavailable
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_SECONDS = 60
 SAMPLE_RATE = 16000
+VAD_FRAME_SAMPLES = 512  # Silero의 16kHz 입력은 32ms 단위다.
+VAD_SPEECH_THRESHOLD = 0.5
+MIN_SPEECH_MS = 300
+logger = logging.getLogger("uvicorn.error")
+
+
+def _has_speech(pcm: bytes) -> bool:
+    """요청마다 독립된 VAD로 최소 발화량을 검사한다."""
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+    speech_ms = 0
+    max_probability = 0
+    # 요청 간 모델 상태를 공유하지 않는다. 모델·CPU 런타임은 패키지에 포함된다.
+    # ponytail: 누적 300ms 기준은 짧은 발화를 거부할 수 있어 실녹음으로 조정한다.
+    try:
+        vad = SileroVAD(SAMPLE_RATE)
+        for offset in range(0, len(samples), VAD_FRAME_SAMPLES):
+            frame = samples[offset:offset + VAD_FRAME_SAMPLES]
+            length = len(frame)
+            if length < VAD_FRAME_SAMPLES:
+                frame = np.pad(frame, (0, VAD_FRAME_SAMPLES - length))
+            probability = vad.process(frame)
+            max_probability = max(max_probability, probability)
+            if probability >= VAD_SPEECH_THRESHOLD:
+                speech_ms += length * 1000 / SAMPLE_RATE
+    except (OSError, RuntimeError, ValueError):
+        raise _unavailable() from None
+    detected = speech_ms >= MIN_SPEECH_MS
+    logger.info(
+        "stt_vad detector=silero duration_ms=%.0f voiced_ms=%.0f max_probability=%.3f decision=%s",
+        len(pcm) * 1000 / (SAMPLE_RATE * 2), speech_ms, max_probability,
+        "allow" if detected else "reject",
+    )
+    return detected
 
 
 def _audio_format(data: bytes, content_type: str | None) -> str:
@@ -71,7 +107,11 @@ def _normalize_audio(data: bytes, audio_format: str) -> bytes:
     if len(decoded) > MAX_AUDIO_SECONDS * SAMPLE_RATE * 2:
         raise _error(400, "AUDIO_TOO_LONG", "음성은 최대 60초까지 전사할 수 있습니다.")
     if not decoded or not any(decoded):
+        logger.info("stt_vad duration_ms=%.0f decision=reject reason=EMPTY_AUDIO",
+                    len(decoded) * 1000 / (SAMPLE_RATE * 2))
         raise _error(400, "EMPTY_AUDIO", "녹음된 음성이 없습니다.")
+    if not _has_speech(decoded):
+        raise _error(400, "NO_SPEECH_DETECTED", "음성이 감지되지 않았습니다. 다시 녹음해 주세요.")
     output = io.BytesIO()
     with wave.open(output, "wb") as wav:
         wav.setnchannels(1)

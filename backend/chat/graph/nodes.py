@@ -34,11 +34,12 @@ def embed_node(state: RecommendationState) -> dict:
 
 def search_node(state: RecommendationState) -> dict:
     """query_vector로 pgvector 검색을 수행해 후보 곡과 무드 태그를 가져온다.
-    classify_node가 뽑은 genres/min_year를 메타데이터 조건으로 같이 넘긴다."""
+    classify_node가 뽑은 genres/min_year/max_year를 메타데이터 조건으로 같이 넘긴다."""
     exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
     tracks, mood_tags = vector_recommendation(
         state["query_vector"], state["recommend_query"], exclude_ids=exclude_ids,
         genres=state.get("recommend_genres"), min_year=state.get("recommend_min_year"),
+        max_year=state.get("recommend_max_year"),
     )
     return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
 
@@ -74,6 +75,19 @@ def lookup_node(state: RecommendationState) -> dict:
         exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
 
     rows = lookup_tracks_db(song_title=song, artist=artist, exclude_ids=exclude_ids)
+
+    # NOTE: 한국 곡 제목은 카탈로그에 한글("심술")로도, 공식 영문 제목("How People
+    # Move")으로도 저장돼 있어서, 원제로 못 찾으면 classify가 준 영문 제목으로 다시 찾는다.
+    song_alt = state.get("lookup_song_alt")
+    if not rows and song and song_alt:
+        rows = lookup_tracks_db(song_title=song_alt, artist=artist, exclude_ids=exclude_ids)
+
+    # NOTE: "coin 노래"처럼 이름 하나만 주면 classify가 곡 제목(IU의 Coin)을 동명의
+    # 아티스트(COIN)로 읽는 등 어느 쪽인지 갈리는 경우가 있어, 하나만 채워졌는데
+    # 결과가 없으면 같은 이름을 반대 필드로 한 번 더 조회한다.
+    if not rows and not (song and artist):
+        rows = lookup_tracks_db(song_title=artist, artist=song, exclude_ids=exclude_ids)
+
     if not rows:
         return {"lookup_status": "not_found"}
 
