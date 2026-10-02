@@ -140,11 +140,28 @@ def lookup(
     return [row for row in unique if id(row) in chosen]
 
 
+# NOTE: 장르는 검색에서 하드 필터라, 검색 가능한 곡이 1~2곡뿐인 장르("Adult
+# Contemporary" 1곡)가 뽑히면 카드가 1장 이하로 나온다. 이보다 작은 장르는 필터
+# 후보에서 빼고, 그 단어는 recommend_query에 남겨 임베딩 검색에 맡긴다.
+MIN_GENRE_TRACKS = 10
+
+
 def known_genres(session: Session) -> list[str]:
-    """DB에 실제 존재하는 장르 문자열 목록(중복 제거, 정렬). classify 프롬프트가
-    장르를 예시로 참고할 때 쓴다 — 카탈로그가 늘어나면 자동으로 반영된다."""
+    """검색 가능한 곡이 MIN_GENRE_TRACKS곡 이상인 장르 목록(정렬). classify 프롬프트가
+    장르 필터 후보로 쓴다 — 카탈로그가 늘어나면 자동으로 반영된다.
+
+    search()와 같은 조건(emb_gemini·store_url 있음)으로 세야, 목록에 있는데 검색하면
+    0곡인 장르가 생기지 않는다.
+    """
 
     rows = session.execute(
-        select(TrackRow.genre).distinct().where(TrackRow.genre.isnot(None))
+        select(TrackRow.genre)
+        .where(
+            TrackRow.genre.isnot(None),
+            TrackRow.emb_gemini.isnot(None),
+            TrackRow.store_url.isnot(None),
+        )
+        .group_by(TrackRow.genre)
+        .having(func.count() >= MIN_GENRE_TRACKS)
     ).scalars().all()
     return sorted(rows)

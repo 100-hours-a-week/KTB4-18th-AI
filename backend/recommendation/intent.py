@@ -105,9 +105,10 @@ def classify_instructions(genres: list[str]) -> str:
         "노래\"처럼 분위기로 풀어서 쓰세요.\n"
         "  · 대화 기록에 없는 내용을 참조하는 경우는 이 필드가 아니라 intent를 "
         "clarify로 분류하세요.\n"
-        f"- recommend_genres: 원하는 장르가 있으면 문자열 배열로. 가능하면 다음 "
-        f"목록에서 가장 가까운 값을 고르고, 목록에 없는 명백한 장르명이면 그대로 "
-        f"적어도 됩니다: {genre_hint}. 장르 언급이 없으면 null.\n"
+        f"- recommend_genres: 원하는 장르가 있으면 다음 목록에 있는 값만 골라 문자열 "
+        f"배열로 적으세요: {genre_hint}. 목록에 없는 장르(예: \"발라드\")는 적지 말고, "
+        f"그 내용은 recommend_query에 남기세요. 장르 언급이 없거나 목록에 맞는 값이 "
+        f"없으면 null.\n"
         "- recommend_min_year: \"최신곡\", \"2020년 이후\" 같은 연도 하한이 있으면 "
         "정수로, 없으면 null.\n"
         "- recommend_query: 검색·이유생성에 쓸, 이번 요청을 독립적으로 이해할 수 "
@@ -170,10 +171,11 @@ def classify_instructions(genres: list[str]) -> str:
 def classify(client: OpenAI, messages: list[str]) -> dict:
     """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 한 번에 추출한다."""
 
+    genres = known_genres()
     try:
         response = client.responses.create(
             model=os.environ["LLM_MODEL"],
-            instructions=classify_instructions(known_genres()),
+            instructions=classify_instructions(genres),
             input=json.dumps({"conversation": messages}, ensure_ascii=False),
             text={
                 "format": {
@@ -235,4 +237,13 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
         "recommend", "guide", "clarify", "lookup", "out_of_scope"
     ):
         raise _model_unavailable()
+
+    # NOTE: 장르는 검색에서 WHERE genre IN (...) 하드 필터로 쓰여서, DB에 없는 장르
+    # (예: "발라드"는 iTunes 장르가 아님)가 하나라도 들어오면 결과가 0곡이 된다.
+    # 프롬프트로 막아도 새어 나오므로, DB에 실제 있는 장르만 남기고 표기도 DB 값에 맞춘다.
+    # 장르 목록을 못 가져왔으면(genres가 비면) 필터 없이 임베딩 검색에 맡긴다.
+    canonical = {genre.lower(): genre for genre in genres}
+    requested = data.get("recommend_genres") or []
+    kept = [canonical[g.lower()] for g in requested if isinstance(g, str) and g.lower() in canonical]
+    data["recommend_genres"] = kept or None
     return data
