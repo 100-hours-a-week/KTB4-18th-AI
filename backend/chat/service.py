@@ -1,10 +1,11 @@
 """음악 검색 결과를 사용자 응답으로 만드는 V1 추천 흐름."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 from openai import OpenAI
 from db.types import Track
+from backend.chat.answer import AnswerHints
 from backend.core.errors import _model_unavailable
 from backend.providers.openrouter import OPENROUTER_BASE_URL
 
@@ -48,9 +49,7 @@ class ChatOutcome:
     tracks: list[Track] | None = None
     text: str | None = None
     query: str | None = None
-    has_non_music_request: bool = False
-    response_style: str | None = None
-    requested_count: int | None = None
+    hints: AnswerHints = field(default_factory=AnswerHints)
 
 
 def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
@@ -82,9 +81,7 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         return ChatOutcome(
             kind="recommend", client=client, tracks=result["tracks"],
             query=result["recommend_query"],
-            has_non_music_request=result["has_non_music_request"],
-            response_style=result["response_style"],
-            requested_count=result["requested_count"],
+            hints=AnswerHints.from_classification(result),
         )
 
     if intent == "guide":
@@ -99,9 +96,7 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
             return ChatOutcome(
                 kind="lookup", client=client, tracks=result["lookup_tracks"],
                 query=result["recommend_query"],
-                has_non_music_request=result["has_non_music_request"],
-                response_style=result["response_style"],
-                requested_count=result["requested_count"],
+                hints=AnswerHints.from_classification(result),
             )
         if status == "ambiguous":
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["lookup_ambiguous"])

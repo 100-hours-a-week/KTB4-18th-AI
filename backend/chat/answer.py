@@ -1,17 +1,38 @@
 """최종 추천·조회 답변 입력과 지시문."""
 
 import json
+from dataclasses import dataclass
 from db.types import Track
 from backend.chat.schemas import UserContext
+
+
+@dataclass
+class AnswerHints:
+    """classify가 뽑아 최종 답변 생성에만 쓰는 값 묶음.
+
+    NOTE: 이 값들을 각각 따로 service → router → streaming → answer로 넘기다 보니
+    필드 하나 추가할 때마다 파일 6개를 고쳐야 해서 하나로 묶었다. 새 값은 여기와
+    from_classification, _request_lines만 고치면 된다.
+    """
+
+    has_non_music_request: bool = False
+    response_style: str | None = None
+    requested_count: int | None = None
+
+    @classmethod
+    def from_classification(cls, result: dict) -> "AnswerHints":
+        return cls(
+            has_non_music_request=result.get("has_non_music_request", False),
+            response_style=result.get("response_style"),
+            requested_count=result.get("requested_count"),
+        )
 
 
 def _request_lines(
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
-    has_non_music_request: bool,
-    response_style: str | None,
-    requested_count: int | None,
+    hints: AnswerHints,
 ) -> str:
     """추천·조회 답변 입력에 공통으로 들어가는 요청 정보 줄을 만든다.
 
@@ -22,10 +43,10 @@ def _request_lines(
     context = user_context.model_dump(exclude_none=True) if user_context else {}
     return (
         f"사용자 요청: {message}\n"
-        f"사용자가 요청한 곡 수: {requested_count if requested_count else '없음'}\n"
+        f"사용자가 요청한 곡 수: {hints.requested_count if hints.requested_count else '없음'}\n"
         f"화면에 카드로 보여지는 곡 수: {len(tracks)}\n"
-        f"음악 외 요청 포함: {'예' if has_non_music_request else '아니오'}\n"
-        f"요청 말투: {response_style or '없음'}\n"
+        f"음악 외 요청 포함: {'예' if hints.has_non_music_request else '아니오'}\n"
+        f"요청 말투: {hints.response_style or '없음'}\n"
         f"사용자 컨텍스트: {json.dumps(context, ensure_ascii=False)}\n"
     )
 
@@ -53,15 +74,12 @@ def answer_input(
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
-    has_non_music_request: bool = False,
-    response_style: str | None = None,
-    requested_count: int | None = None,
+    hints: AnswerHints | None = None,
 ) -> str:
     """검증된 추천 정보를 최종 답변 생성용 입력으로 만든다."""
 
     return (
-        _request_lines(message, tracks, user_context, has_non_music_request,
-                       response_style, requested_count)
+        _request_lines(message, tracks, user_context, hints or AnswerHints())
         + f"검증된 추천곡: {json.dumps([track.model_dump() for track in tracks], ensure_ascii=False)}"
     )
 
@@ -83,15 +101,12 @@ def lookup_answer_input(
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
-    has_non_music_request: bool = False,
-    response_style: str | None = None,
-    requested_count: int | None = None,
+    hints: AnswerHints | None = None,
 ) -> str:
     """조회된 곡 정보를 최종 답변 생성용 입력으로 만든다."""
 
     return (
-        _request_lines(message, tracks, user_context, has_non_music_request,
-                       response_style, requested_count)
+        _request_lines(message, tracks, user_context, hints or AnswerHints())
         + f"조회된 곡 정보: {json.dumps([track.model_dump() for track in tracks], ensure_ascii=False)}"
     )
 
