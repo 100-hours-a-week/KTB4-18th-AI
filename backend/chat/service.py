@@ -18,12 +18,23 @@ GUIDE_TEXT = (
 OUT_OF_SCOPE_TEXT = "죄송해요, 저는 음악 추천과 곡 정보 조회만 도와드릴 수 있어요."
 NOT_FOUND_TEXT = "요청하신 곡 정보를 찾지 못했어요. 곡 제목이나 아티스트명을 다시 확인해 주세요."
 CLARIFY_TEXT = {
-    "intent_unclear": (
-        "어떤 걸 도와드릴까요? 음악을 추천받고 싶으시면 지금 기분이나 상황을, 곡 정보가 "
-        "궁금하시면 곡 제목이나 아티스트명을 알려주세요."
+    # NOTE: 채팅방을 나가면 대화 기억이 사라지고 추천곡만 히스토리에 남는 구조라,
+    # 대화에 없는 내용을 가리키면 히스토리를 안내한다.
+    "missing_reference": (
+        "말씀하신 내용을 이 대화에서 찾지 못했어요. 채팅방을 나가면 이전 대화는 "
+        "이어지지 않고, 추천받았던 곡은 히스토리에서 다시 확인하실 수 있어요. "
+        "찾으시는 곡이나 분위기를 다시 알려주시면 도와드릴게요."
+    ),
+    "lookup_ambiguous": (
+        "어떤 곡이나 아티스트를 찾으시는지 조금 더 구체적으로 알려주세요. 예: '아이유 밤편지'"
     ),
     "recommend_insufficient_info": (
         "어떤 분위기나 상황에 어울리는 음악을 찾으시나요? 예: '퇴근길에 듣기 좋은 잔잔한 노래'"
+    ),
+    "recommend_unsupported_condition": (
+        "가사 내용이나 노래의 주제, 차트 순위, 정확한 BPM 같은 조건으로는 아직 곡을 "
+        "찾을 수 없어요. 대신 '비 오는 날 듣기 좋은 잔잔한 노래'처럼 분위기·상황·장르·"
+        "연도로 말씀해 주시면 찾아드릴게요."
     ),
 }
 
@@ -37,6 +48,9 @@ class ChatOutcome:
     tracks: list[Track] | None = None
     text: str | None = None
     query: str | None = None
+    has_non_music_request: bool = False
+    response_style: str | None = None
+    requested_count: int | None = None
 
 
 def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
@@ -62,26 +76,35 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
 
     if intent == "recommend":
         if result["recommend_unsupported_condition"]:
-            return ChatOutcome(kind="static", text=GUIDE_TEXT)
+            return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_unsupported_condition"])
         if not result["recommend_has_enough_info"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_insufficient_info"])
         return ChatOutcome(
             kind="recommend", client=client, tracks=result["tracks"],
             query=result["recommend_query"],
+            has_non_music_request=result["has_non_music_request"],
+            response_style=result["response_style"],
+            requested_count=result["requested_count"],
         )
 
     if intent == "guide":
         return ChatOutcome(kind="static", text=GUIDE_TEXT)
 
     if intent == "clarify":
-        return ChatOutcome(kind="static", text=CLARIFY_TEXT["intent_unclear"])
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT["missing_reference"])
 
     if intent == "lookup":
         status = result["lookup_status"]
         if status == "found":
-            return ChatOutcome(kind="lookup", client=client, tracks=result["lookup_tracks"])
+            return ChatOutcome(
+                kind="lookup", client=client, tracks=result["lookup_tracks"],
+                query=result["recommend_query"],
+                has_non_music_request=result["has_non_music_request"],
+                response_style=result["response_style"],
+                requested_count=result["requested_count"],
+            )
         if status == "ambiguous":
-            return ChatOutcome(kind="static", text=CLARIFY_TEXT["intent_unclear"])
+            return ChatOutcome(kind="static", text=CLARIFY_TEXT["lookup_ambiguous"])
         return ChatOutcome(kind="static", text=NOT_FOUND_TEXT)
 
     return ChatOutcome(kind="static", text=OUT_OF_SCOPE_TEXT)

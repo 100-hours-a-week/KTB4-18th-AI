@@ -30,7 +30,11 @@ class RecommendationState(TypedDict, total=False):
     recommend_min_year: int | None
     recommend_query: str
     lookup_song: str | None
+    lookup_song_alt: str | None
     lookup_artist: str | None
+    requested_count: int | None
+    has_non_music_request: bool
+    response_style: str | None
 
     # ── embed_node가 채움 ──
     query_vector: list[float]
