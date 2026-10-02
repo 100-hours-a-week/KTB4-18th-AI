@@ -1,17 +1,53 @@
 """최종 추천·조회 답변 입력과 지시문."""
 
 import json
+from dataclasses import dataclass
 from db.types import Track
 from backend.chat.schemas import UserContext
+
+
+@dataclass
+class AnswerHints:
+    """classify가 뽑아 최종 답변 생성에만 쓰는 값 묶음.
+
+    NOTE: 이 값들을 각각 따로 service → router → streaming → answer로 넘기다 보니
+    필드 하나 추가할 때마다 파일 6개를 고쳐야 해서 하나로 묶었다. 새 값은 여기와
+    from_classification, _request_lines만 고치면 된다.
+    """
+
+    has_non_music_request: bool = False
+    response_style: str | None = None
+    requested_count: int | None = None
+    min_year: int | None = None
+    max_year: int | None = None
+
+    @classmethod
+    def from_classification(cls, result: dict) -> "AnswerHints":
+        return cls(
+            has_non_music_request=result.get("has_non_music_request", False),
+            response_style=result.get("response_style"),
+            requested_count=result.get("requested_count"),
+            min_year=result.get("recommend_min_year"),
+            max_year=result.get("recommend_max_year"),
+        )
+
+    def year_condition(self) -> str:
+        """검색에 적용된 발매연도 조건을 사람이 읽는 문장으로. 없으면 '없음'."""
+
+        if self.min_year and self.max_year:
+            return f"{self.min_year}~{self.max_year}년 발매곡만 검색함"
+        if self.min_year:
+            return f"{self.min_year}년 이후 발매곡만 검색함"
+        if self.max_year:
+            return f"{self.max_year}년 이전 발매곡만 검색함"
+        return "없음"
 
 
 def _request_lines(
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
-    has_non_music_request: bool,
-    response_style: str | None,
-    requested_count: int | None,
+    hints: AnswerHints,
 ) -> str:
     """추천·조회 답변 입력에 공통으로 들어가는 요청 정보 줄을 만든다.
 
@@ -22,10 +58,11 @@ def _request_lines(
     context = user_context.model_dump(exclude_none=True) if user_context else {}
     return (
         f"사용자 요청: {message}\n"
-        f"사용자가 요청한 곡 수: {requested_count if requested_count else '없음'}\n"
+        f"사용자가 요청한 곡 수: {hints.requested_count if hints.requested_count else '없음'}\n"
         f"화면에 카드로 보여지는 곡 수: {len(tracks)}\n"
-        f"음악 외 요청 포함: {'예' if has_non_music_request else '아니오'}\n"
-        f"요청 말투: {response_style or '없음'}\n"
+        f"음악 외 요청 포함: {'예' if hints.has_non_music_request else '아니오'}\n"
+        f"요청 말투: {hints.response_style or '없음'}\n"
+        f"적용된 발매연도 조건: {hints.year_condition()}\n"
         f"사용자 컨텍스트: {json.dumps(context, ensure_ascii=False)}\n"
     )
 
@@ -45,7 +82,9 @@ _SCOPE_RULES = (
     "골랐다고 말하지 마세요. '사용자가 요청한 곡 수'가 카드 곡 수와 다르면, 그 "
     "개수에 맞추긴 어려웠다는 점을 짧게 알리고 카드 곡 수를 정확히 말하세요(예: "
     "\"딱 2곡에 맞추긴 어려워서, 비슷한 분위기로 5곡 골라봤어요\"). '사용자가 "
-    "요청한 곡 수'가 없으면 개수 얘기는 하지 마세요."
+    "요청한 곡 수'가 없으면 개수 얘기는 하지 마세요. "
+    "'적용된 발매연도 조건'이 있으면 모든 곡이 이미 그 조건으로 검색된 것이니, "
+    "발매 연도를 확인할 수 없다고 말하지 마세요."
 )
 
 
@@ -53,15 +92,12 @@ def answer_input(
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
-    has_non_music_request: bool = False,
-    response_style: str | None = None,
-    requested_count: int | None = None,
+    hints: AnswerHints | None = None,
 ) -> str:
     """검증된 추천 정보를 최종 답변 생성용 입력으로 만든다."""
 
     return (
-        _request_lines(message, tracks, user_context, has_non_music_request,
-                       response_style, requested_count)
+        _request_lines(message, tracks, user_context, hints or AnswerHints())
         + f"검증된 추천곡: {json.dumps([track.model_dump() for track in tracks], ensure_ascii=False)}"
     )
 
@@ -83,15 +119,12 @@ def lookup_answer_input(
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
-    has_non_music_request: bool = False,
-    response_style: str | None = None,
-    requested_count: int | None = None,
+    hints: AnswerHints | None = None,
 ) -> str:
     """조회된 곡 정보를 최종 답변 생성용 입력으로 만든다."""
 
     return (
-        _request_lines(message, tracks, user_context, has_non_music_request,
-                       response_style, requested_count)
+        _request_lines(message, tracks, user_context, hints or AnswerHints())
         + f"조회된 곡 정보: {json.dumps([track.model_dump() for track in tracks], ensure_ascii=False)}"
     )
 

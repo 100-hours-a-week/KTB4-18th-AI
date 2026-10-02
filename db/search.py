@@ -38,6 +38,7 @@ def search(
     exclude_ids: set[int] = None,
     min_year: int = None,
     genres: list[str] = None,
+    max_year: int = None,
     overfetch: int = 6,
 ) -> tuple[list[Track], dict[str, dict]]:
     """sqlalchemy를 이용해 임베딩이 들어있는 DB에서 유사도가 높은 순서로 API Track을 가져옴.
@@ -50,27 +51,40 @@ def search(
     exclude_ids = exclude_ids or set()
 
     dist = TrackRow.emb_gemini.cosine_distance(qvec)
-    stmt = (
-        select(TrackRow, dist.label("dist"))
-        # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
-        # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
-        # 채워질 때까지 검색 대상에서 뺀다.
-        # emb_gemini가 NULL인 곡(아직 gemini로 임베딩 안 된 대기열)은 검색 대상에서 뺀다.
-        .where(TrackRow.emb_gemini.isnot(None), TrackRow.store_url.isnot(None))
-        .order_by(dist)
-        .limit(n)
-    )
-    if exclude_ids:
-        stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
-    if min_year:
-        stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
-    if genres:
-        stmt = stmt.where(TrackRow.genre.in_(genres))
-    rows = session.execute(stmt).all()
 
-    # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지
-    hits = [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
-    hits = _dedup(hits, k)
+    def candidates(genre_filter: list[str] | None) -> list[Hit]:
+        stmt = (
+            select(TrackRow, dist.label("dist"))
+            # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
+            # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
+            # 채워질 때까지 검색 대상에서 뺀다.
+            # emb_gemini가 NULL인 곡(아직 gemini로 임베딩 안 된 대기열)은 검색 대상에서 뺀다.
+            .where(TrackRow.emb_gemini.isnot(None), TrackRow.store_url.isnot(None))
+            .order_by(dist)
+            .limit(n)
+        )
+        if exclude_ids:
+            stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
+        if min_year:
+            stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
+        if max_year:
+            stmt = stmt.where(TrackRow.release_date <= date(max_year, 12, 31))
+        if genre_filter:
+            stmt = stmt.where(TrackRow.genre.in_(genre_filter))
+        # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지
+        return [Hit(track=r[0], score=1.0 - float(r[1])) for r in session.execute(stmt).all()]
+
+    hits = _dedup(candidates(genres), k)
+
+    # NOTE: 장르(genre 칸, 예: "Singer/Songwriter"는 iTunes 장르명)는 LLM이 "발라드"처럼
+    # 목록에 없는 표현을 가장 비슷해 보이는 장르로 추측해 고르기도 하고, 정당한 장르여도
+    # 연도 등 다른 조건과 겹치면 후보가 거의 안 남는다(2014년 이전 + Singer/Songwriter = 1곡).
+    # k곡이 안 되면 장르만 빼고 다시 찾아 남은 자리를 채운다. 장르가 맞는 곡이 앞에 오고,
+    # 사용자가 직접 말한 연도 조건은 풀지 않는다.
+    if genres and len(hits) < k:
+        picked = {hit.track.track_id for hit in hits}
+        extra = [hit for hit in candidates(None) if hit.track.track_id not in picked]
+        hits = _dedup(hits + extra, k)
 
     # NOTE: LLM 호출이 실패용 이유 공통 폴백 문구다.
     reason = f"'{sound_description}' 상황에 어울리는 곡입니다."
@@ -140,11 +154,28 @@ def lookup(
     return [row for row in unique if id(row) in chosen]
 
 
+# NOTE: 장르는 검색에서 하드 필터라, 검색 가능한 곡이 1~2곡뿐인 장르("Adult
+# Contemporary" 1곡)가 뽑히면 카드가 1장 이하로 나온다. 이보다 작은 장르는 필터
+# 후보에서 빼고, 그 단어는 recommend_query에 남겨 임베딩 검색에 맡긴다.
+MIN_GENRE_TRACKS = 10
+
+
 def known_genres(session: Session) -> list[str]:
-    """DB에 실제 존재하는 장르 문자열 목록(중복 제거, 정렬). classify 프롬프트가
-    장르를 예시로 참고할 때 쓴다 — 카탈로그가 늘어나면 자동으로 반영된다."""
+    """검색 가능한 곡이 MIN_GENRE_TRACKS곡 이상인 장르 목록(정렬). classify 프롬프트가
+    장르 필터 후보로 쓴다 — 카탈로그가 늘어나면 자동으로 반영된다.
+
+    search()와 같은 조건(emb_gemini·store_url 있음)으로 세야, 목록에 있는데 검색하면
+    0곡인 장르가 생기지 않는다.
+    """
 
     rows = session.execute(
-        select(TrackRow.genre).distinct().where(TrackRow.genre.isnot(None))
+        select(TrackRow.genre)
+        .where(
+            TrackRow.genre.isnot(None),
+            TrackRow.emb_gemini.isnot(None),
+            TrackRow.store_url.isnot(None),
+        )
+        .group_by(TrackRow.genre)
+        .having(func.count() >= MIN_GENRE_TRACKS)
     ).scalars().all()
     return sorted(rows)
