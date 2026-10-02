@@ -16,6 +16,18 @@ def reason_instructions() -> str:
         "- Base the explanation ONLY on the mood tags given. Do not invent "
         "facts about lyrics, artists, or chart performance.\n"
         "- Never mention songs outside the provided list.\n"
+        "- Every song was selected because its audio is close to the request. "
+        "Mood tags are only supporting hints.\n"
+        "- When the tags fit the request, simply describe the song with those tags. "
+        "Do not add any contrast or mention of sound analysis.\n"
+        "- Only when the tags clearly differ from the request, mention the tagged "
+        "mood and then that its sound is still close to the request. Vary the "
+        "wording song by song, for example:\n"
+        "  \"밝은 편이지만 소리의 결이 요청한 분위기와 닮았어요\"\n"
+        "  \"태그는 편안함 쪽이지만 사운드가 요청과 가깝게 분석됐어요\"\n"
+        "  \"에너지가 있는 곡인데, 전체적인 사운드는 요청과 통해요\"\n"
+        "- Never say a song doesn't fit or is far from the request.\n"
+        "- Do not describe sound details you cannot see (instruments, vocals, tempo).\n"
         '- Return JSON only: {"<track_id>": "<설명>", ...}'
     )
 
