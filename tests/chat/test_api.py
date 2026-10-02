@@ -35,6 +35,7 @@ def classification(intent: str, **overrides: object) -> dict:
         "recommend_unsupported_condition": False,
         "recommend_genres": None,
         "recommend_min_year": None,
+        "recommend_max_year": None,
         "recommend_query": "퇴근길 음악",
         "lookup_song": None,
         "lookup_song_alt": None,
@@ -138,7 +139,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     monkeypatch.setattr(
         nodes,
         "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None: (
+        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None: (
             [make_track()],
             {"123": {"lofi": 0.9, "chill": 0.7}},
         ),
@@ -194,7 +195,7 @@ def test_chat_no_match_returns_empty_tracks(
     test_client, fake_openai = client
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None: ([], {}),
+        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None: ([], {}),
     )
 
     response = test_client.post("/v1/chat/messages", json=request_body())
@@ -214,7 +215,7 @@ def test_chat_music_catalog_unavailable_returns_503(
     test_client, _ = client
 
     def failing_vector_recommendation(
-        query_vector: list[float], message: str, exclude_ids=None, genres=None, min_year=None,
+        query_vector: list[float], message: str, exclude_ids=None, genres=None, min_year=None, max_year=None,
     ):
         raise _catalog_unavailable()
 
@@ -330,26 +331,28 @@ def test_recommend_insufficient_info_returns_clarify_text(client, monkeypatch):
     assert fake_openai.responses.calls == []
 
 
-def test_recommend_forwards_genres_and_min_year_to_search(client, monkeypatch):
-    """classify가 뽑은 장르·연도 조건이 실제 검색 호출로 전달되는지 확인한다."""
-    test_client, _ = client
+def test_recommend_forwards_genres_and_year_range_to_search(client, monkeypatch):
+    """classify가 뽑은 장르·연도 범위가 실제 검색 호출로 전달되고, 답변 입력에도 적용된
+    연도 조건이 들어가 "발매 연도를 확인할 수 없다"는 답이 나오지 않게 한다."""
+    test_client, fake_openai = client
     monkeypatch.setattr(
         nodes, "classify",
         lambda client, messages: recommend_classification(
-            recommend_genres=["K-Pop"], recommend_min_year=2020,
+            recommend_genres=["K-Pop"], recommend_min_year=1990, recommend_max_year=1999,
         ),
     )
     calls: list[dict[str, object]] = []
 
-    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None):
-        calls.append({"genres": genres, "min_year": min_year})
+    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None):
+        calls.append({"genres": genres, "min_year": min_year, "max_year": max_year})
         return [make_track()], {"123": {"lofi": 0.9}}
 
     monkeypatch.setattr(nodes, "vector_recommendation", fake_vector_recommendation)
-    response = test_client.post("/v1/chat/messages", json=request_body("케이팝 신나는 노래"))
+    response = test_client.post("/v1/chat/messages", json=request_body("90년대 케이팝 노래"))
 
     assert response.status_code == 200
-    assert calls == [{"genres": ["K-Pop"], "min_year": 2020}]
+    assert calls == [{"genres": ["K-Pop"], "min_year": 1990, "max_year": 1999}]
+    assert "적용된 발매연도 조건: 1990~1999년 발매곡만 검색함" in fake_openai.responses.calls[1]["input"]
 
 
 def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
@@ -373,7 +376,7 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
 
     search_calls: list[str] = []
 
-    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None):
+    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None):
         search_calls.append(message)
         return [make_track()], {"123": {"lofi": 0.9}}
 
@@ -412,7 +415,7 @@ def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch
     monkeypatch.setattr(nodes, "embed_query", lambda embedding_client, message: [0.1, 0.2, 0.3])
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None:
+        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None:
             ([make_track()], {"123": {"lofi": 0.9}}),
     )
 
@@ -437,7 +440,7 @@ def test_recommend_passes_requested_and_card_counts_to_answer(client, monkeypatc
     )
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None: (
+        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None: (
             [make_track(track_id=str(i)) for i in range(5)], {},
         ),
     )

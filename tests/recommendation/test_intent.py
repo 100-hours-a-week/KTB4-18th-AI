@@ -11,6 +11,7 @@ def classification_json(**overrides: object) -> str:
         "recommend_unsupported_condition": False,
         "recommend_genres": None,
         "recommend_min_year": None,
+        "recommend_max_year": None,
         "recommend_query": "슬픈 발라드",
         "lookup_song": None,
         "lookup_song_alt": None,

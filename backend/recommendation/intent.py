@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import date
 
 from openai import OpenAI
 
@@ -44,6 +45,8 @@ def classify_instructions(genres: list[str]) -> str:
     """
 
     genre_hint = ", ".join(genres) if genres else "(장르 목록을 가져오지 못했습니다 — 참고 없이 판단하세요)"
+    # NOTE: LLM은 올해가 몇 년인지 몰라 "최신곡"을 엉뚱한 해로 넣을 수 있어서 직접 알려준다.
+    this_year = date.today().year
 
     return (
         "사용자의 음악 챗봇 메시지를 분석해 아래 필드를 모두 채우세요.\n\n"
@@ -109,8 +112,10 @@ def classify_instructions(genres: list[str]) -> str:
         f"배열로 적으세요: {genre_hint}. 목록에 없는 장르(예: \"발라드\")는 적지 말고, "
         f"그 내용은 recommend_query에 남기세요. 장르 언급이 없거나 목록에 맞는 값이 "
         f"없으면 null.\n"
-        "- recommend_min_year: \"최신곡\", \"2020년 이후\" 같은 연도 하한이 있으면 "
-        "정수로, 없으면 null.\n"
+        f"- recommend_min_year, recommend_max_year: 발매 연도 하한·상한이 있으면 각각 "
+        f"정수로, 없으면 null. 올해는 {this_year}년입니다. 예: \"1990년대\" → "
+        f"1990/1999, \"2020년 이후\" → 2020/null, \"2015년 이전\" → null/2014, "
+        f"\"최신곡\" → {this_year - 1}/null.\n"
         "- recommend_query: 검색·이유생성에 쓸, 이번 요청을 독립적으로 이해할 수 "
         "있는 한국어 문장 하나로 재구성하세요. 요청 문장이 아니라 원하는 음악을 "
         "묘사하는 명사구로 쓰고(예: \"퇴근길에 듣기 좋은 잔잔한 노래\"), \"추천해줘\", "
@@ -161,8 +166,8 @@ def classify_instructions(genres: list[str]) -> str:
         "마세요. 없으면 null.\n\n"
         "intent가 recommend/lookup이 아니면 recommend_has_enough_info/"
         "recommend_unsupported_condition/recommend_genres/recommend_min_year/"
-        "lookup_song/lookup_song_alt/lookup_artist는 각각 "
-        "false/false/null/null/null/null/null로 "
+        "recommend_max_year/lookup_song/lookup_song_alt/lookup_artist는 각각 "
+        "false/false/null/null/null/null/null/null로 "
         "채우세요. recommend_query는 intent와 상관없이 위 방식대로 항상 채우거나, "
         "재구성할 필요가 없으면 이번 메시지 원문을 그대로 넣으세요."
     )
@@ -201,6 +206,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                                 "items": {"type": "string"},
                             },
                             "recommend_min_year": {"type": ["integer", "null"]},
+                            "recommend_max_year": {"type": ["integer", "null"]},
                             "recommend_query": {"type": "string"},
                             "lookup_song": {"type": ["string", "null"]},
                             "lookup_song_alt": {"type": ["string", "null"]},
@@ -215,6 +221,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "recommend_unsupported_condition",
                             "recommend_genres",
                             "recommend_min_year",
+                            "recommend_max_year",
                             "recommend_query",
                             "lookup_song",
                             "lookup_song_alt",

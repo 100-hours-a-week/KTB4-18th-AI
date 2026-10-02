@@ -10,6 +10,7 @@ def vector_recommendation(
     exclude_ids: set[int] = None,
     genres: list[str] = None,
     min_year: int = None,
+    max_year: int = None,
 ) -> tuple[list[Track], dict[str, dict]]:
     """pgvector 검색 결과의 추천곡과 무드 태그를 가져온다."""
 
@@ -21,7 +22,8 @@ def vector_recommendation(
 
         with SessionLocal() as session:
             tracks, mood_tags_by_id = vector_search(
-                session, qvec, message, exclude_ids=exclude_ids, genres=genres, min_year=min_year,
+                session, qvec, message, exclude_ids=exclude_ids, genres=genres,
+                min_year=min_year, max_year=max_year,
             )
     except Exception as error:
         raise _catalog_unavailable() from error

@@ -34,11 +34,12 @@ def embed_node(state: RecommendationState) -> dict:
 
 def search_node(state: RecommendationState) -> dict:
     """query_vector로 pgvector 검색을 수행해 후보 곡과 무드 태그를 가져온다.
-    classify_node가 뽑은 genres/min_year를 메타데이터 조건으로 같이 넘긴다."""
+    classify_node가 뽑은 genres/min_year/max_year를 메타데이터 조건으로 같이 넘긴다."""
     exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
     tracks, mood_tags = vector_recommendation(
         state["query_vector"], state["recommend_query"], exclude_ids=exclude_ids,
         genres=state.get("recommend_genres"), min_year=state.get("recommend_min_year"),
+        max_year=state.get("recommend_max_year"),
     )
     return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
 
