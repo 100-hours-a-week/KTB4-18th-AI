@@ -10,6 +10,7 @@ dependencies = [
     "numpy",  # pgvector 검색 결과 벡터 연산(db/search.py, db/models.py)에 사용
     "openai>=3.6.0",
     "pgvector>=0.5.0",  # 요청마다 실행되는 pgvector 코사인 검색(db/search.py)에 필요
+    "pillow>=12",
     "psycopg[binary]>=3.3.5",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.20",
