@@ -43,7 +43,7 @@ def route_by_intent(state: RecommendationState) -> str:
     return END
 
 
-def build_graph():
+def build_graph(*, photo: bool = False):
     """RecommendationState 기반 StateGraph를 구성해 컴파일한다.
     최종 답변 생성(SSE 스트리밍, stream_answer/stream_lookup_answer)은 그래프
     밖에서 그대로 처리한다.
@@ -57,7 +57,8 @@ def build_graph():
     graph.add_node("reason", reason_node)
     graph.add_node("lookup", lookup_node)
 
-    graph.add_edge(START, "classify")
+    # NOTE: 사진은 VLM이 만든 검색 조건으로 진입하므로 텍스트 의도 분류를 생략한다.
+    graph.add_edge(START, "embed" if photo else "classify")
     graph.add_conditional_edges(
         "classify", route_by_intent, {"embed": "embed", "lookup": "lookup", END: END},
     )
