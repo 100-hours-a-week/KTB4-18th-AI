@@ -126,12 +126,34 @@
     .logrow .lm { width: 40px; }.logrow .lp { flex: 1; min-width: 0; overflow-wrap: anywhere; }.logrow .lst { font-weight: 600; }.logrow .lst.ok { color: #12805c; }.logrow .lst.err { color: #c0362c; }.logrow .lt { width: 70px; color: #b0b2b8; text-align: right; }
     @media (max-width: 900px) { .inspane { display: none; }.chatpane { border-right: 0; }.bubble { max-width: 86%; } }
     @media (max-width: 540px) { .topbar { height: auto; min-height: 64px; padding: 10px 14px; }.topright { display: none; }.chathead { padding: 0 14px; }.msgscroll { padding: 18px 14px 8px; }.composer { padding: 12px 14px 14px; }.bubble { max-width: 92%; }.schrow { grid-template-columns: 72px 52px minmax(0, 1fr); } }
+    [hidden] { display: none !important; }
+    .chatpane { position: relative; }
+    .photo-screen { position: absolute; inset: 0; z-index: 2; background: white; overflow-y: auto; }
+    .photo-head { position: sticky; top: 0; display: flex; align-items: center; padding: 16px; background: white; z-index: 1; }
+    .photo-head h1 { flex: 1; margin: 0 40px 0 0; text-align: center; font-size: 18px; }
+    .photo-back { width: 40px; height: 40px; border: 0; background: none; font-size: 32px; cursor: pointer; }
+    .photo-content { max-width: 430px; margin: auto; padding: 18px 24px 28px; text-align: center; }
+    .photo-frame { aspect-ratio: 1; border-radius: 16px; overflow: hidden; background: #f5f5f5; }
+    .photo-frame img, .photo-frame svg { width: 100%; height: 100%; object-fit: cover; }
+    .photo-content h2 { margin: 30px 0 12px; font-size: 24px; letter-spacing: -1px; }
+    .photo-description { color: #777; line-height: 1.6; min-height: 48px; margin-bottom: 24px; }
+    .photo-action { width: 100%; min-height: 56px; padding: 14px; border: 1px solid #161616; border-radius: 12px; background: #111; color: white; font-weight: 600; cursor: pointer; }
+    .photo-action.secondary { color: #111; background: white; }
+    .photo-action:disabled { background: #eee; color: #999; border-color: #eee; cursor: default; }
+    .photo-privacy { color: #888; font-size: 13px; margin: 22px 0; line-height: 1.6; }
+    .photo-notice { color: #a43535; font-size: 14px; line-height: 1.6; min-height: 24px; }
+    .photo-sheet { position: absolute; inset: 0; z-index: 3; background: #0007; display: flex; align-items: flex-end; }
+    .photo-sheet-body { position: relative; width: 100%; padding: 28px 24px max(24px, env(safe-area-inset-bottom)); background: white; border-radius: 24px 24px 0 0; text-align: center; }
+    .photo-sheet-body h2 { font-size: 20px; }
+    .photo-sheet-body p { line-height: 1.6; }
+    .photo-sheet-close { position: absolute; top: 12px; right: 16px; background: none; border: 0; font-size: 28px; cursor: pointer; }
+    @media (max-width: 540px) { .app { height: 100dvh; }.photo-content { padding-top: 8px; }.photo-content h2 { font-size: 22px; } }
   </style>
 </head>
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">FastAPI 로컬 테스트 · 텍스트 · STT API 수동 테스트</div></div></div>
+      <div class="brand"><div class="glyph">♫</div><div><div class="title">음악 추천 챗봇 — Chat Console</div><div class="subtitle">FastAPI 로컬 테스트 · 텍스트 · STT · 사진 실험</div></div></div>
       <div class="topright"><span class="pill env">로컬 개발</span><span class="pill"><span class="dot" id="connDot"></span><span class="mono" id="connText">대기 중</span></span></div>
     </header>
     <div class="body">
@@ -140,14 +162,33 @@
         <section class="msgscroll" id="msgScroll" aria-live="polite"></section>
         <div class="composer">
           <div class="chips" id="chips"></div>
+          <input id="photoFile" type="file" accept="image/*" capture="environment" hidden>
           <div id="sttStatus" class="hint" role="status" aria-live="polite">마이크 버튼을 눌러 녹음하세요. 전사문을 확인한 뒤 전송할 수 있습니다.</div>
           <div class="inputrow">
-            <button class="iconbtn ghost" id="photoBtn" type="button" title="풍경 사진 첨부 (멀티모달 예정)">▣</button>
+            <button class="iconbtn ghost" id="photoBtn" type="button" title="풍경 사진 촬영 또는 선택" aria-label="풍경 사진 촬영 또는 선택">▣</button>
             <input class="textfield" id="input" type="text" maxlength="200" placeholder="메시지를 입력하세요…" autocomplete="off">
             <button class="iconbtn" id="voiceBtn" type="button" title="음성(STT) 입력">≋</button>
             <button class="iconbtn" id="sendBtn" type="button" title="전송 (Enter)">↑</button>
           </div>
-          <div class="hint"><b>Enter</b>로 전송 · 전사문을 확인·수정한 뒤 직접 전송 · 사진 입력은 멀티모달 API 연동 예정</div>
+          <div class="hint"><b>Enter</b>로 전송 · 사진은 미리보기 확인 후 전송 · 두 방식 모두 실제 모델·DB를 호출합니다</div>
+        </div>
+        <section id="photoScreen" class="photo-screen" aria-label="풍경으로 음악 찾기" hidden>
+          <header class="photo-head"><button id="photoBack" class="photo-back" aria-label="채팅으로 돌아가기">‹</button><h1>풍경으로 음악 찾기</h1></header>
+          <div class="photo-content">
+            <div class="photo-frame">
+              <svg id="photoPlaceholder" viewBox="0 0 400 400" fill="none" stroke="#aaa" stroke-width="3" aria-label="촬영할 풍경 미리보기" role="img"><circle cx="305" cy="110" r="28"/><path d="M15 305 Q100 260 220 300 T385 310 M60 283 L155 135 Q160 128 167 139 L290 318 M220 215 L270 170 L360 318"/></svg>
+              <img id="photoPreview" alt="촬영한 풍경 미리보기" hidden>
+            </div>
+            <h2 id="photoTitle">눈앞의 풍경을 담아주세요</h2>
+            <p id="photoDescription" class="photo-description">이 순간에 어울리는 음악을 찾아드릴게요.</p>
+            <button id="capturePhoto" class="photo-action" type="button">카메라로 촬영</button>
+            <p class="photo-privacy">♧ 사진은 풍경 분석과 음악 추천을 위해서만 사용됩니다.</p>
+            <p id="photoNotice" class="photo-notice" role="status" aria-live="polite"></p>
+            <button id="recommendPhoto" class="photo-action" type="button" disabled>이 사진으로 추천받기</button>
+          </div>
+        </section>
+        <div id="photoSheet" class="photo-sheet" role="dialog" aria-modal="true" aria-labelledby="photoSheetTitle" hidden>
+          <div class="photo-sheet-body"><button id="closePhotoSheet" class="photo-sheet-close" aria-label="재촬영 안내 닫기">×</button><div aria-hidden="true">▧</div><h2 id="photoSheetTitle">사진을 다시 찍어 주세요</h2><p>풍경의 특징을 충분히 확인하기 어려워요.<br>주변이 잘 보이도록 촬영해 주세요.</p><button id="retakePhoto" class="photo-action">다시 촬영</button></div>
         </div>
       </main>
       <aside class="inspane">
@@ -155,7 +196,8 @@
         <div class="inspbody">
           <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono" id="endpointName">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> <span id="endpointPath">/v1/chat/messages</span></span></div><div class="kv"><span class="k">응답 방식</span><span class="v" id="responseType">text/event-stream</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
           <div class="blocktitle"><span class="bt">요청 본문 (Request)</span></div><pre class="jsonpre" id="reqBox"><span class="placeholder">아직 보낸 요청이 없습니다.</span></pre>
-          <div class="blocktitle"><span class="bt">응답 본문 (Response)</span><span class="mono" id="respMini" style="font-size:11px;color:#9a9ca3"></span></div><pre class="jsonpre" id="resBox"><span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span></pre>
+          <div class="blocktitle"><span class="bt">응답 과정 · 수신 순서</span></div><div id="responseSteps"><div class="empty">아직 수신한 이벤트가 없습니다.</div></div>
+          <div class="blocktitle"><span class="bt">최종 응답 (Response)</span><span class="mono" id="respMini" style="font-size:11px;color:#9a9ca3"></span></div><pre class="jsonpre" id="resBox"><span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span></pre>
           <section class="sect"><button class="secthead" id="schemaHead" type="button"><span class="st">요청 · 응답 스키마</span><span class="chev open" id="schemaChev">⌄</span></button><div class="schtable" id="schemaBody"><div class="schcap">STT — 요청 · 응답</div><div class="schrow"><span class="f mono">audio</span><span class="ty mono">file</span><span class="rule">multipart · 60초 · 10 MiB 이하</span></div><div class="schrow"><span class="f mono">transcript</span><span class="ty mono">string</span><span class="rule">사용자 확인 후 전송할 전사 초안</span></div><div class="schcap">ChatRequest — 요청</div><div class="schrow"><span class="f mono">thread_id</span><span class="ty mono">UUID</span><span class="rule">채팅 세션 동안 유지</span></div><div class="schrow"><span class="f mono">request_id</span><span class="ty mono">UUID</span><span class="rule">요청마다 새로 발급</span></div><div class="schrow"><span class="f mono">message</span><span class="ty mono">string</span><span class="rule">필수 · 공백 불가 · ≤ 200자</span></div><div class="schcap" style="margin-top:6px">SSE — 응답</div><div class="schrow"><span class="f mono">text</span><span class="ty mono">delta</span><span class="rule">OpenAI 한국어 텍스트 조각</span></div><div class="schrow"><span class="f mono">tracks</span><span class="ty mono">array</span><span class="rule">iTunes 미리듣기 곡 목록</span></div></div></section>
           <section class="sect"><div class="secthead static"><span class="st">호출 로그</span></div><div class="schtable" id="logBody"><div class="empty">아직 호출 기록이 없습니다.</div></div></section>
         </div>
@@ -166,9 +208,18 @@
     "use strict";
     const CHAT_URL = "/v1/chat/messages";
     const STT_URL = "/v1/transcriptions";
+    const PHOTO_URL = "/v1/chat/images";
     const state = { source: "text", photoAttached: false, recording: false, busy: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
     const $ = (id) => document.getElementById(id);
     const scroll = $("msgScroll");
+    let photoController = null;
+    let photoRevision = 0;
+    let photoBlob = null;
+    let photoUrl = null;
+    const photoUrls = new Set();
+    let responseStepCount = 0;
+    let lastResponseStep = null;
+    let responseStarted = 0;
 
     function nowLabel() { const d = new Date(); const ap = d.getHours() < 12 ? "오전" : "오후"; return `${ap} ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}`; }
     function esc(value) { return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;"); }
@@ -176,24 +227,54 @@
     function scrollToBottom() { scroll.scrollTop = scroll.scrollHeight; }
     function addDivider(text) { const el = document.createElement("div"); el.className = "divider"; el.innerHTML = `<span>${esc(text)}</span>`; scroll.append(el); }
     function addGreeting() { const el = document.createElement("div"); el.className = "msgrow left"; el.innerHTML = `<div class="bubble bot greeting"><span class="greeting-mark" aria-hidden="true">♪</span><div class="greeting-copy">지금 어떤 순간에 머물고 있나요?\n\n날씨나 장소, 느껴지는 기분을 편하게 알려주세요.\n글로 적어 주시거나 음성으로 말해도 좋아요.\n지금 딱 어울리는 음악을 골라드릴게요.</div><div class="greeting-save"><span aria-hidden="true">🔖</span><span>추천받은 곡은 챗봇 추천에 모아둘게요.</span></div></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(el); }
-    function addUserBubble(text, source) { const row = document.createElement("div"); row.className = "msgrow right"; const label = source === "voice" ? "음성 인식" : "텍스트"; row.innerHTML = `<div class="bubble user pending">${esc(text)}</div><div class="metaline right"><span class="time">${nowLabel()}</span><span class="srctag ${source}">${label}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
+    function addUserBubble(text, source) { const row = document.createElement("div"); row.className = "msgrow right"; const label = source === "voice" ? "음성 인식" : source === "photo" ? "사진" : "텍스트"; row.innerHTML = `<div class="bubble user pending">${esc(text)}</div><div class="metaline right"><span class="time">${nowLabel()}</span><span class="srctag ${source}">${label}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
     function addBotResponse() { const row = document.createElement("div"); row.className = "msgrow left"; row.innerHTML = `<div class="bubble bot bot-answer"></div><div class="track-list"></div><div class="metaline"><span class="time">${nowLabel()}</span></div>`; scroll.append(row); scrollToBottom(); return row; }
-    function addTrackCards(container, tracks) { container.innerHTML = tracks.map((track) => `<article class="track-card">${track.artwork_url ? `<img class="track-art" src="${esc(track.artwork_url)}" alt="${esc(track.title)} 앨범 표지">` : '<div class="track-art empty">♪</div>'}<div class="track-copy"><div class="track-title">${esc(track.title)}</div><div class="track-artist">${esc(track.artist)}</div><div>${esc(track.reason)}</div><div class="track-actions">${track.preview_url ? `<button class="preview-btn" type="button" data-preview="${esc(track.preview_url)}">▶ 미리듣기 · iTunes 제공</button>` : ""}<a class="source-link" href="${esc(track.store_url)}" target="_blank" rel="noopener">iTunes에서 보기</a></div></div></article>`).join(""); scrollToBottom(); }
+    function addTrackCards(container, tracks) { container.innerHTML = tracks.map((track) => `<article class="track-card">${track.artwork_url ? `<img class="track-art" src="${esc(track.artwork_url)}" alt="${esc(track.title)} 앨범 표지">` : '<div class="track-art empty">♪</div>'}<div class="track-copy"><div class="track-title">${esc(track.title)}</div><div class="track-artist">${esc(track.artist)}</div><div>${esc(track.reason)}</div><div class="track-actions">${track.preview_url ? `<button class="preview-btn" type="button" data-preview="${esc(track.preview_url)}">▶ 미리듣기 · iTunes 제공</button>` : ""}${track.store_url ? `<a class="source-link" href="${esc(track.store_url)}" target="_blank" rel="noopener">iTunes에서 보기</a>` : ""}</div></div></article>`).join(""); scrollToBottom(); }
     function setConnection(kind, label) { const cls = kind === "ok" ? "dot ok" : kind === "err" ? "dot err" : "dot"; $("connDot").className = cls; $("connDot2").className = cls; $("connText").textContent = label; }
     function setStatus(kind, code, text, latency) { const badge = $("statusBadge"); if (kind === "idle") { badge.className = "statusbadge"; badge.textContent = "대기 중"; $("latText").textContent = "—"; $("respMini").textContent = ""; return; } badge.className = kind === "ok" ? "statusbadge ok" : "statusbadge err"; badge.textContent = `${code} ${text}`; $("latText").textContent = latency == null ? "—" : `${latency}ms`; $("respMini").textContent = code; }
     function setReqBox(value) { $("reqBox").innerHTML = jsonHtml(value); }
     function setResBox(value, error) { const box = $("resBox"); box.className = error ? "jsonpre err" : "jsonpre"; box.innerHTML = jsonHtml(value); }
+    function appendResponseStep(event, data) {
+      const box = $("responseSteps");
+      // NOTE: 연속된 텍스트 조각만 합친다. 장면 분석·상태·오류는 수신 순서대로 보존한다.
+      if (event === "text" && lastResponseStep?.event === "text") {
+        lastResponseStep.data.delta += data.delta || "";
+        lastResponseStep.pre.innerHTML = jsonHtml(lastResponseStep.data);
+        return;
+      }
+      if (!responseStepCount) box.replaceChildren();
+      const labels = { verdict: "사진 적합 판정", status: "처리 상태", scene: "VLM 장면 분석", text: "응답 텍스트", tracks: "추천곡", rejected: "재촬영 판정", error: "오류", done: "완료" };
+      const item = document.createElement("details"); item.className = "sect"; item.open = true;
+      const heading = document.createElement("summary"); heading.className = "secthead";
+      heading.textContent = `${++responseStepCount}. ${labels[event] || event} (${event}) · +${Math.round(performance.now() - responseStarted)}ms`;
+      const pre = document.createElement("pre"); pre.className = event === "error" ? "jsonpre err" : "jsonpre"; pre.innerHTML = jsonHtml(data);
+      item.append(heading, pre); box.append(item);
+      lastResponseStep = { event, data: { ...data }, pre };
+    }
     function pushLog(status, path = CHAT_URL) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, path, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">${esc(item.path)}</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
-    function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>녹음 중 · 최대 60초 · 종료하면 전사 요청<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">전사문을 확인·수정한 뒤 전송하세요<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진 입력은 준비 중입니다 <span class="tag-plan">멀티모달 예정</span><span class="x" data-act="removePhoto">×</span></span>'; $("chips").innerHTML = html; }
+    function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>녹음 중 · 최대 60초 · 종료하면 전사 요청<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">전사문을 확인·수정한 뒤 전송하세요<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진으로 추천받기 · 아래 방식 확인 <button type="button" class="x" data-act="removePhoto" aria-label="사진 제거">×</button></span>'; $("chips").innerHTML = html; }
     function refreshControls() {
       for (const id of ["sendBtn", "input", "photoBtn", "resetBtn"]) $(id).disabled = state.busy || state.recording;
-      $("voiceBtn").disabled = state.busy;
+      $("input").disabled = state.busy || state.recording || state.photoAttached;
+      $("capturePhoto").disabled = state.busy;
+      $("recommendPhoto").disabled = state.busy || !state.photoAttached || !navigator.onLine;
+      $("photoPreview").hidden = !state.photoAttached;
+      $("photoPlaceholder").toggleAttribute("hidden", state.photoAttached);
+      $("capturePhoto").textContent = state.photoAttached ? "다시 촬영" : "카메라로 촬영";
+      $("capturePhoto").classList.toggle("secondary", state.photoAttached);
+      $("photoTitle").textContent = state.photoAttached ? "촬영한 풍경을 확인해 주세요" : "눈앞의 풍경을 담아주세요";
+      $("photoDescription").textContent = state.photoAttached ? "추천에 사용할 사진이 선명하게 담겼는지 확인해 주세요." : "이 순간에 어울리는 음악을 찾아드릴게요.";
+      $("voiceBtn").disabled = state.busy || state.photoAttached;
       $("voiceBtn").textContent = state.recording ? "■" : "≋";
       $("voiceBtn").title = state.recording ? "녹음 종료 후 전사" : "마이크 녹음 시작";
       $("voiceBtn").setAttribute("aria-label", $("voiceBtn").title);
       $("voiceBtn").setAttribute("aria-pressed", String(state.recording)); $("voiceBtn").className = "iconbtn" + (state.recording ? " rec" : state.source === "voice" ? " on" : ""); $("photoBtn").className = "iconbtn ghost" + (state.photoAttached ? " on" : ""); }
 
     function showEndpoint(path) {
+      responseStepCount = 0; lastResponseStep = null; responseStarted = performance.now();
+      $("responseSteps").innerHTML = '<div class="empty">아직 수신한 이벤트가 없습니다.</div>';
+      $("resBox").className = "jsonpre";
+      $("resBox").innerHTML = '<span class="placeholder">응답 대기 중입니다.</span>';
       $("lastEndpoint").textContent = "POST " + path;
       $("endpointName").textContent = path;
       $("endpointPath").textContent = path;
@@ -201,7 +282,7 @@
     }
     async function send() {
       if (state.busy || state.recording) return;
-      if ([...$("input").value.trim()].length > 200) {
+      if (!state.photoAttached && [...$("input").value.trim()].length > 200) {
         $("sttStatus").textContent = "전사문을 200자 이하로 수정한 뒤 전송하세요.";
         return;
       }
@@ -209,31 +290,55 @@
       try { await sendChat(); } finally { state.busy = false; refreshControls(); }
     }
     async function sendChat() {
-      showEndpoint(CHAT_URL);
+      const isPhoto = state.photoAttached;
+      const controller = isPhoto ? new AbortController() : null;
+      if (isPhoto) { photoController = controller; $("photoNotice").textContent = "사진을 확인하고 있어요…"; }
+      const path = isPhoto ? PHOTO_URL : CHAT_URL;
+      showEndpoint(path);
       const input = $("input");
       const raw = input.value.trim();
-      if (!raw) return;
-      const userRow = addUserBubble(raw, state.source);
+      if (!raw && !state.photoAttached) return;
+      const userRow = addUserBubble(state.photoAttached ? "사진으로 음악 추천" : raw, state.photoAttached ? "photo" : state.source);
+      if (state.photoAttached) {
+        const preview = document.createElement("img");
+        preview.src = photoUrl; preview.alt = "추천 요청 사진";
+        preview.style.cssText = "display:block;max-width:200px;max-height:160px;border-radius:8px";
+        userRow.querySelector(".bubble").append(preview);
+      }
+      if (isPhoto) userRow.remove();
       const body = { thread_id: state.threadId, request_id: crypto.randomUUID(), message: raw };
-      setReqBox(body);
-      input.value = "";
+      let options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+      if (state.photoAttached) {
+        const form = new FormData();
+        form.append("thread_id", body.thread_id); form.append("request_id", body.request_id);
+        form.append("image", photoBlob, "photo.jpg");
+        options = { method: "POST", body: form };
+        setReqBox({ thread_id: body.thread_id, request_id: body.request_id,
+          image: { content_type: photoBlob.type, bytes: photoBlob.size }, encoding: "multipart/form-data" });
+      } else { setReqBox(body); input.value = ""; }
+      if (controller) options.signal = controller.signal;
       setConnection("", "음악 검색 중");
       const started = performance.now();
       let response;
       try {
-        response = await fetch(CHAT_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        response = await fetch(path, options);
       } catch (error) {
-        setConnection("err", "연결 실패"); setStatus("err", "ERR", "No response", null); setResBox({ error: "서버에 연결하지 못했습니다. uvicorn 실행 상태를 확인하세요.", detail: String(error) }, true); userRow.querySelector(".bubble").classList.remove("pending"); const note = document.createElement("div"); note.className = "errnote"; note.textContent = "전송 실패 — 서버 미응답"; userRow.append(note); pushLog("ERR"); return;
+        if (controller?.signal.aborted) return;
+        if (isPhoto) $("photoNotice").textContent = "사진을 확인하지 못했어요. 서버 연결을 확인하고 다시 시도해 주세요.";
+        setConnection("err", "연결 실패"); setStatus("err", "ERR", "No response", null); setResBox({ error: "서버에 연결하지 못했습니다. uvicorn 실행 상태를 확인하세요.", detail: String(error) }, true); userRow.querySelector(".bubble").classList.remove("pending"); const note = document.createElement("div"); note.className = "errnote"; note.textContent = "전송 실패 — 서버 미응답"; userRow.append(note); pushLog("ERR", path); return;
       }
+      if (controller?.signal.aborted) return;
       userRow.querySelector(".bubble").classList.remove("pending");
       if (!response.ok) {
         let data;
         try { data = await response.json(); } catch { data = { detail: "응답이 JSON 형식이 아닙니다." }; }
+        if (isPhoto) $("photoNotice").textContent = `사진을 확인하지 못했어요 (${response.status}). 다시 시도해 주세요.`;
         const latency = Math.round(performance.now() - started);
-        setConnection("err", "요청 실패"); setStatus("err", response.status, response.statusText || "Error", latency); setResBox(data, true); const note = document.createElement("div"); note.className = "errnote"; note.textContent = `요청 거부됨 (${response.status})`; userRow.append(note); pushLog(response.status); return;
+        setConnection("err", "요청 실패"); setStatus("err", response.status, response.statusText || "Error", latency); setResBox(data, true); const note = document.createElement("div"); note.className = "errnote"; note.textContent = `요청 거부됨 (${response.status})`; userRow.append(note); pushLog(response.status, path); return;
       }
 
       const botRow = addBotResponse();
+      if (isPhoto) botRow.remove();
       const answerBox = botRow.querySelector(".bot-answer");
       const trackList = botRow.querySelector(".track-list");
       const reader = response.body.getReader();
@@ -242,8 +347,13 @@
       let answer = "";
       let tracks = [];
       let streamError = null;
+      let completed = false;
+      let scene = null;
+      let rejected = false;
+      let accepted = false;
 
       function consume(block) {
+        if (controller?.signal.aborted) return;
         let eventName = "message";
         let dataText = "";
         for (const line of block.split("\n")) {
@@ -252,6 +362,22 @@
         }
         if (!dataText) return;
         const data = JSON.parse(dataText);
+        appendResponseStep(eventName, data);
+        if (eventName === "status") { setConnection("", data.stage === "analyzing" ? "사진 확인 중" : "음악 검색 중"); }
+        if (eventName === "scene") { scene = data; }
+        // NOTE: 판정 전에는 채팅을 바꾸지 않고, 적합 판정에서만 기존 대화에 사진을 합류시킨다.
+        if (eventName === "verdict" && isPhoto) {
+          if (data.usable && !accepted) {
+            accepted = true;
+            scroll.append(userRow, botRow);
+            $("photoScreen").hidden = true;
+            setPhotoChatInert(false);
+            removePhoto();
+            scrollToBottom();
+          } else if (!data.usable) { rejected = true; openPhotoSheet(); }
+        }
+        if (eventName === "rejected") { rejected = true; if (isPhoto && !$("photoScreen").hidden) openPhotoSheet(); answerBox.textContent = data.message; setConnection("err", "재촬영 안내"); }
+        if (eventName === "done") completed = true;
         if (eventName === "text") { answer += data.delta || ""; answerBox.textContent = answer; scrollToBottom(); }
         if (eventName === "tracks") { tracks = data.tracks || []; addTrackCards(trackList, tracks); }
         if (eventName === "error") streamError = data.detail || "응답 스트리밍에 실패했습니다.";
@@ -271,10 +397,15 @@
         streamError = String(error);
       }
 
+      if (controller?.signal.aborted) return;
       const latency = Math.round(performance.now() - started);
-      if (streamError) { setConnection("err", "스트림 실패"); setStatus("err", "ERR", "Stream", latency); setResBox({ error: streamError, answer, tracks }, true); }
-      else { setConnection("ok", "연결됨"); setStatus("ok", response.status, "OK", latency); setResBox({ message: answer, tracks }, false); }
-      pushLog(response.status);
+      if (isPhoto && completed && !accepted && !rejected && !streamError) streamError = "사진 판정 이벤트가 없습니다. 서버를 재시작해 주세요.";
+      if (isPhoto) $("photoNotice").textContent = "";
+      if (!completed && !streamError) streamError = "완료 이벤트 전에 연결이 종료됐습니다.";
+      if (streamError) { if (isPhoto && !accepted) $("photoNotice").textContent = "사진을 확인하지 못했어요. 다시 시도해 주세요."; else answerBox.textContent = answer + "\n응답을 완료하지 못했어요. 다시 요청해 주세요."; setConnection("err", "스트림 실패"); setStatus("err", "ERR", "Stream", latency); setResBox({ error: streamError, answer, tracks }, true); }
+      else { setConnection(rejected ? "err" : "ok", rejected ? "재촬영 안내" : "연결됨"); setStatus("ok", response.status, rejected ? "재촬영" : "OK", latency); setResBox({ message: rejected ? answerBox.textContent : answer, tracks, ...(scene ? { analysis: scene } : {}) }, false); }
+      if (path === PHOTO_URL && completed && !rejected && !streamError) removePhoto();
+      pushLog(response.status, path);
     }
 
     let playingAudio = null;
@@ -384,15 +515,78 @@
         $("sttStatus").textContent = error.name === "NotAllowedError" ? "마이크 권한이 거부되었습니다. 브라우저 권한을 확인하세요." : "마이크를 사용할 수 없습니다.";
       } finally { state.busy = false; renderChips(); refreshControls(); }
     }
-    window.addEventListener("pagehide", () => { leaving = true; stopRecording(); releaseMicrophone(); });
+    window.addEventListener("pagehide", () => { leaving = true; photoRevision++; photoController?.abort(); stopRecording(); releaseMicrophone(); photoUrls.forEach(url => URL.revokeObjectURL(url)); photoUrls.clear(); });
     window.addEventListener("pageshow", () => { leaving = false; });
     $("sendBtn").addEventListener("click", () => { if (!state.recording) send(); });
     $("input").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); if (!state.recording) send(); } });
     $("voiceBtn").addEventListener("click", () => { if (state.recording) stopRecording(); else startRecording(); });
-    $("photoBtn").addEventListener("click", () => { state.photoAttached = !state.photoAttached; renderChips(); refreshControls(); });
-    $("chips").addEventListener("click", (event) => { const action = event.target.closest("[data-act]")?.dataset.act; if (action === "cancelVoice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; } if (action === "removePhoto") state.photoAttached = false; if (action === "stopRec") stopRecording(false); renderChips(); refreshControls(); });
+    function removePhoto() {
+      if (photoUrl && !scroll.querySelector(`img[src="${photoUrl}"]`)) {
+        URL.revokeObjectURL(photoUrl); photoUrls.delete(photoUrl); photoUrl = null;
+      }
+      state.photoAttached = false; photoBlob = null; $("photoFile").value = "";
+      $("photoPreview").removeAttribute("src"); renderChips(); refreshControls();
+    }
+    function setPhotoChatInert(value) {
+      for (const element of document.querySelectorAll(".chathead, .msgscroll, .composer")) element.inert = value;
+    }
+    function closePhotoSheet() {
+      $("photoSheet").hidden = true; $("photoScreen").inert = false; $("recommendPhoto").focus();
+    }
+    function openPhotoSheet() {
+      $("photoNotice").textContent = "";
+      $("photoSheet").hidden = false; $("photoScreen").inert = true; $("closePhotoSheet").focus();
+    }
+    function pickPhoto() { $("photoFile").value = ""; $("photoFile").click(); }
+    $("photoBtn").addEventListener("click", () => {
+      removePhoto(); $("photoNotice").textContent = "";
+      $("photoScreen").hidden = false; $("photoScreen").scrollTop = 0; setPhotoChatInert(true); $("photoBack").focus();
+    });
+    $("photoBack").addEventListener("click", () => {
+      photoRevision++; photoController?.abort(); closePhotoSheet(); removePhoto();
+      $("photoScreen").hidden = true; setPhotoChatInert(false); $("photoBtn").focus();
+      setConnection("", "대기 중");
+    });
+    $("capturePhoto").addEventListener("click", pickPhoto);
+    $("recommendPhoto").addEventListener("click", send);
+    $("closePhotoSheet").addEventListener("click", closePhotoSheet);
+    $("retakePhoto").addEventListener("click", () => { closePhotoSheet(); pickPhoto(); });
+    $("photoSheet").addEventListener("keydown", event => {
+      if (event.key === "Escape") closePhotoSheet();
+      if (event.key === "Tab") { event.preventDefault(); (document.activeElement === $("closePhotoSheet") ? $("retakePhoto") : $("closePhotoSheet")).focus(); }
+    });
+    window.addEventListener("online", refreshControls);
+    window.addEventListener("offline", refreshControls);
+    $("photoFile").addEventListener("change", async () => {
+      const file = $("photoFile").files[0];
+      if (!file) return;
+      const revision = ++photoRevision;
+      state.busy = true; refreshControls();
+      $("photoNotice").textContent = "사진을 불러오고 있어요…";
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file);
+        if (bitmap.width * bitmap.height > 60000000) throw new Error("사진은 6,000만 픽셀 이하여야 합니다.");
+        const canvas = document.createElement("canvas");
+        // NOTE: 고해상도 원본을 전송하지 않고 분석에 필요한 크기로 먼저 축소한다.
+        const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+        if (!blob || blob.size > 5 * 1024 * 1024) throw new Error("JPEG 변환 후 5 MiB를 초과합니다.");
+        if (revision !== photoRevision) return;
+        if (photoUrl && !scroll.querySelector(`img[src="${photoUrl}"]`)) { URL.revokeObjectURL(photoUrl); photoUrls.delete(photoUrl); }
+        photoBlob = blob; photoUrl = URL.createObjectURL(blob); photoUrls.add(photoUrl);
+        $("photoPreview").src = photoUrl; state.photoAttached = true;
+        $("photoNotice").textContent = "";
+      } catch (error) { if (revision === photoRevision) $("photoNotice").textContent = "사진을 불러오지 못했어요. " + error.message; }
+      finally { bitmap?.close(); state.busy = false; renderChips(); refreshControls(); }
+    });
+    $("chips").addEventListener("click", (event) => { if (state.busy) return; const action = event.target.closest("[data-act]")?.dataset.act; if (action === "cancelVoice") { state.source = "text"; $("input").placeholder = "메시지를 입력하세요…"; } if (action === "removePhoto") removePhoto(); if (action === "stopRec") stopRecording(false); renderChips(); refreshControls(); });
     $("schemaHead").addEventListener("click", () => { state.schemaOpen = !state.schemaOpen; $("schemaBody").style.display = state.schemaOpen ? "" : "none"; $("schemaChev").className = "chev" + (state.schemaOpen ? " open" : ""); });
     function resetAll() {
+      removePhoto(); photoUrls.forEach(url => URL.revokeObjectURL(url)); photoUrls.clear(); photoUrl = null;
       if (state.busy || state.recording) return;
       $("input").value = "";
       $("sttStatus").textContent = "마이크 버튼을 눌러 녹음하세요. 전사문을 확인한 뒤 전송할 수 있습니다.";
