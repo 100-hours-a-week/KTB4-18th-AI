@@ -209,7 +209,16 @@
     const CHAT_URL = "/v1/chat/messages";
     const STT_URL = "/v1/transcriptions";
     const PHOTO_URL = "/v1/chat/images";
-    const state = { source: "text", photoAttached: false, recording: false, busy: false, schemaOpen: true, callCount: 0, callLog: [], threadId: crypto.randomUUID() };
+    // NOTE: 같은 Wi-Fi의 HTTP 테스트 주소에서도 안전한 난수로 UUID를 만든다.
+    function newRequestId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    const state = { source: "text", photoAttached: false, recording: false, busy: false, schemaOpen: true, callCount: 0, callLog: [], threadId: newRequestId() };
     const $ = (id) => document.getElementById(id);
     const scroll = $("msgScroll");
     let photoController = null;
@@ -306,7 +315,7 @@
         userRow.querySelector(".bubble").append(preview);
       }
       if (isPhoto) userRow.remove();
-      const body = { thread_id: state.threadId, request_id: crypto.randomUUID(), message: raw };
+      const body = { thread_id: state.threadId, request_id: newRequestId(), message: raw };
       let options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
       if (state.photoAttached) {
         const form = new FormData();
@@ -591,7 +600,7 @@
       $("input").value = "";
       $("sttStatus").textContent = "마이크 버튼을 눌러 녹음하세요. 전사문을 확인한 뒤 전송할 수 있습니다.";
       showEndpoint(CHAT_URL); setConnection("", "대기 중");
-      scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.source = "text"; state.photoAttached = false; state.recording = false; state.threadId = crypto.randomUUID(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
+      scroll.innerHTML = ""; addDivider(new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())); addGreeting(); scrollToBottom(); state.source = "text"; state.photoAttached = false; state.recording = false; state.threadId = newRequestId(); renderChips(); refreshControls(); $("input").placeholder = "메시지를 입력하세요…"; $("reqBox").innerHTML = '<span class="placeholder">아직 보낸 요청이 없습니다.</span>'; $("resBox").className = "jsonpre"; $("resBox").innerHTML = '<span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span>'; setStatus("idle"); }
     $("resetBtn").addEventListener("click", resetAll);
     resetAll();
   </script>
