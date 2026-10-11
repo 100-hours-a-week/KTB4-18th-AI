@@ -6,7 +6,6 @@ from langchain_core.runnables import RunnableConfig
 
 from backend.chat.graph.state import RecommendationState
 from db.types import Track
-from backend.recommendation.reasons import assign_reasons
 from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.openrouter import get_embedding_client
@@ -42,14 +41,6 @@ def search_node(state: RecommendationState) -> dict:
         max_year=state.get("recommend_max_year"),
     )
     return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
-
-
-def reason_node(state: RecommendationState, config: RunnableConfig) -> dict:
-    """검색된 곡마다 추천 이유를 채운다."""
-
-    tracks = state["tracks"]
-    assign_reasons(config["configurable"]["client"], state["recommend_query"], tracks, state["mood_tags"])
-    return {"tracks": tracks}
 
 
 LOOKUP_FALLBACK_REASON = "조회하신 곡 정보예요."
@@ -112,4 +103,4 @@ def lookup_node(state: RecommendationState) -> dict:
 
 # NOTE: 최종 답변 생성(stream_answer/stream_lookup_answer)은 SSE 스트리밍이라
 # dict를 반환하는 일반 노드 계약과 맞지 않아 그래프 밖(main.py)에서 그대로
-# 처리한다. 그래프는 reason_node 또는 lookup_node에서 끝난다.
+# 처리한다. 그래프는 search_node 또는 lookup_node에서 끝난다.

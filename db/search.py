@@ -42,7 +42,7 @@ def search(
     overfetch: int = 6,
 ) -> tuple[list[Track], dict[str, dict]]:
     """sqlalchemy를 이용해 임베딩이 들어있는 DB에서 유사도가 높은 순서로 API Track을 가져옴.
-    두 번째 반환값은 Effnet을 통해 구한 track_id별 mood_tags다. 호출 측이 곡별ㅜ추천 이유를 생성할 때 근거로 쓴다.
+    두 번째 반환값은 Effnet을 통해 구한 track_id별 mood_tags다. 곡별 이유 LLM 제거 후 현재 소비처는 없다.
     """
 
     # NOTE: overfetch 방식은 일리는 있으나, 더 많이 가져오는데 문제가 있으면 수정해도 괜찮다
@@ -86,7 +86,7 @@ def search(
         extra = [hit for hit in candidates(None) if hit.track.track_id not in picked]
         hits = _dedup(hits + extra, k)
 
-    # NOTE: LLM 호출이 실패용 이유 공통 폴백 문구다.
+    # NOTE: 곡별 이유 LLM 없이 응답 계약의 reason 필드를 채우는 공통 문구다.
     reason = f"'{sound_description}' 상황에 어울리는 곡입니다."
     tracks = [
         Track(
