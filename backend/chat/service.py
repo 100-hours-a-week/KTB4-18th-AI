@@ -7,6 +7,7 @@ from openai import OpenAI
 from db.types import Track
 from backend.chat.answer import AnswerHints
 from backend.core.errors import _model_unavailable
+from backend.providers.llm import with_fallback
 from backend.providers.openrouter import OPENROUTER_BASE_URL
 
 # NOTE: 안내 문구는 일단은 고정 문구로 하기로 선택했다.
@@ -59,8 +60,10 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     api_key = os.getenv("OPENROUTER_LLM_API_KEY", "").strip()
     if not api_key or api_key.startswith("<") or not os.getenv("LLM_MODEL", "").strip():
         raise _model_unavailable()
-    client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL,
-                    timeout=30.0, max_retries=0)
+    # NOTE: 폴백 설정(LLM_FALLBACK_*)이 있을 때만 단계별 폴백 라우터로 감싸고,
+    # 없으면 OpenRouter client를 그대로 쓴다.
+    client = with_fallback(OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL,
+                                  timeout=30.0, max_retries=0))
 
     # NOTE: recommendation → graph.graph → graph.nodes → recommendation로 이어지는
     # 순환 import를 피하려고 그래프 모듈은 호출 시점에 import한다.
