@@ -98,8 +98,7 @@ def answer_input(
 
     return (
         _request_lines(message, tracks, user_context, hints or AnswerHints())
-        # NOTE: reason은 검색 단계의 공통 문구라 답변 근거가 되지 않으므로 넘기지 않는다.
-        + f"검증된 추천곡: {json.dumps([track.model_dump(exclude={'reason'}) for track in tracks], ensure_ascii=False)}"
+        + f"검증된 추천곡: {json.dumps([track.model_dump() for track in tracks], ensure_ascii=False)}"
     )
 
 
@@ -130,11 +129,7 @@ def lookup_answer_input(
 
 
 def lookup_answer_instructions() -> str:
-    """조회 결과를 안내하기 위한 시스템 지시를 반환한다.
-
-    NOTE: lookup 곡의 reason은 고정 문구라 서비스에 드러나지 않으므로, 추천 쪽과 달리
-    reason과 맞추라는 지시는 넣지 않는다.
-    """
+    """조회 결과를 안내하기 위한 시스템 지시를 반환한다."""
 
     return (
         "당신은 20~30대 남녀를 주 사용층으로 하는 한국어 음악 정보 안내 챗봇입니다. "

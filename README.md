@@ -21,7 +21,7 @@ uv sync --locked
 
 | 기능 | 키 환경변수 | 모델 |
 | --- | --- | --- |
-| 추천 답변·이유 | `OPENROUTER_LLM_API_KEY` | `LLM_MODEL` |
+| 의도 분류·종합 안내 | `OPENROUTER_LLM_API_KEY` | `LLM_MODEL` |
 | 음성 전사 | `OPENROUTER_STT_API_KEY` | `STT_MODEL` (기본값: `openai/whisper-large-v3-turbo`) |
 | 검색 임베딩 | `OPENROUTER_EMBEDDING_API_KEY` | `EMBEDDING_MODEL=google/gemini-embedding-2`, 3072차원 |
 
@@ -32,8 +32,9 @@ LLM과 임베딩 SDK의 자동 재시도는 중복 과금을 피하기 위해 �
 팀원이 별도로 실행하는 Gemini 음성 적재 코드는 이 저장소에 없으므로 별도 전환이 필요합니다.
 
 현재 채팅은 LangGraph에서 의도를 분류한 뒤 추천 요청만 임베딩·DB 검색으로 연결합니다.
-곡별 추천 이유는 LLM으로 생성하지 않으며, 응답의 `tracks[].reason`에는 검색 단계의 공통 문구가 들어갑니다.
-그 외 요청은 임시 안내문과 빈 곡 목록을 반환하며, STT는 별도 API로 유지합니다.
+검색된 곡의 종합 안내는 별도 LLM으로 생성하며, 곡별 이유 생성 호출과 추천·조회 응답의 `tracks[].reason` 필드는 제거했습니다.
+일반 추천은 생성 LLM 2회(의도 분류·종합 안내)와 임베딩 1회를 호출합니다. 요청 형식과 SSE 순서는 유지합니다.
+곡·아티스트 조회는 DB 검색 결과와 조회 안내를 반환하며, 사용법·정보 부족·미지원 요청은 고정 안내와 빈 곡 목록을 반환합니다. STT는 별도 API로 유지합니다.
 사용자 메시지는 `thread_id`별 서버 메모리에 누적됩니다. 재시작 시 사라지고 여러 워커 간에 공유되지 않으며,
 기록 삭제·상한과 이전 추천곡을 활용한 후속 대화는 아직 구현되지 않았습니다.
 배포 전 QA에서 실제 OpenRouter·DB 연결, 브라우저 녹음, 대화 상태 처리와 오류 대응을 확인합니다.

@@ -63,7 +63,7 @@ def make_track_row(track_id: int = 999, title: str = "TOMBOY", artist: str = "HY
     )
 
 
-def make_track(track_id: str = "123", reason: str = "폴백 이유") -> Track:
+def make_track(track_id: str = "123") -> Track:
     """pgvector가 반환한 가짜 Track이다."""
     return Track(
         track_id=track_id,
@@ -72,7 +72,6 @@ def make_track(track_id: str = "123", reason: str = "폴백 이유") -> Track:
         artwork_url="https://example.com/art.jpg",
         preview_url="https://example.com/preview.m4a",
         store_url="https://music.apple.com/track/123",
-        reason=reason,
     )
 
 
@@ -138,9 +137,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     monkeypatch.setattr(
         nodes,
         "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None: (
-            [make_track()],
-            {"123": {"lofi": 0.9, "chill": 0.7}},
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None: (
+            [make_track()]
         ),
     )
 
@@ -163,9 +161,10 @@ def test_chat_streams_text_before_completed_track_cards(
     assert '"preview_url": "https://example.com/preview.m4a"' in response.text
     assert response.text.index("event: text") < response.text.index("event: tracks")
     assert "event: done" in response.text
-    # 곡별 이유 생성 없이 최종 답변 스트리밍 1회만 호출하고, 답변 입력에는 reason을 넘기지 않는다.
+    # 곡별 이유 생성 없이 최종 답변 스트리밍 1회만 호출하고, 응답과 답변 입력 어디에도 reason이 없다.
     assert len(fake_openai.responses.calls) == 1
     assert '"reason"' not in fake_openai.responses.calls[0]["input"]
+    assert '"reason"' not in response.text
     assert test_client.post("/chat/stream", json=request_body()).status_code == 404
 
 
@@ -176,7 +175,7 @@ def test_chat_no_match_returns_empty_tracks(
     test_client, fake_openai = client
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None: ([], {}),
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None: [],
     )
 
     response = test_client.post("/v1/chat/messages", json=request_body())
@@ -196,7 +195,7 @@ def test_chat_music_catalog_unavailable_returns_503(
     test_client, _ = client
 
     def failing_vector_recommendation(
-        query_vector: list[float], message: str, exclude_ids=None, genres=None, min_year=None, max_year=None,
+        query_vector: list[float], exclude_ids=None, genres=None, min_year=None, max_year=None,
     ):
         raise _catalog_unavailable()
 
@@ -324,9 +323,9 @@ def test_recommend_forwards_genres_and_year_range_to_search(client, monkeypatch)
     )
     calls: list[dict[str, object]] = []
 
-    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None):
+    def fake_vector_recommendation(query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None):
         calls.append({"genres": genres, "min_year": min_year, "max_year": max_year})
-        return [make_track()], {"123": {"lofi": 0.9}}
+        return [make_track()]
 
     monkeypatch.setattr(nodes, "vector_recommendation", fake_vector_recommendation)
     response = test_client.post("/v1/chat/messages", json=request_body("90년대 케이팝 노래"))
@@ -355,11 +354,11 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
         lambda embedding_client, message: embed_calls.append(message) or [0.1, 0.2, 0.3],
     )
 
-    search_calls: list[str] = []
+    search_calls: list[list[float]] = []
 
-    def fake_vector_recommendation(query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None):
-        search_calls.append(message)
-        return [make_track()], {"123": {"lofi": 0.9}}
+    def fake_vector_recommendation(query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None):
+        search_calls.append(query_vector)
+        return [make_track()]
 
     monkeypatch.setattr(nodes, "vector_recommendation", fake_vector_recommendation)
 
@@ -370,7 +369,7 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
 
     assert response.status_code == 200
     assert embed_calls == [resolved_query]
-    assert search_calls == [resolved_query]
+    assert search_calls == [[0.1, 0.2, 0.3]]
 
     # 최종 답변 생성(stream_answer)도 body.message가 아니라 recommend_query를 받아야 한다.
     # (한때 main.py가 body.message를 그대로 넘겨서, "이전에 추천된 곡 목록이 없어..."처럼
@@ -392,8 +391,8 @@ def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch
     monkeypatch.setattr(nodes, "embed_query", lambda embedding_client, message: [0.1, 0.2, 0.3])
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None:
-            ([make_track()], {"123": {"lofi": 0.9}}),
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None:
+            [make_track()],
     )
 
     response = test_client.post(
@@ -417,8 +416,8 @@ def test_recommend_passes_requested_and_card_counts_to_answer(client, monkeypatc
     )
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, message, exclude_ids=None, genres=None, min_year=None, max_year=None: (
-            [make_track(track_id=str(i)) for i in range(5)], {},
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None: (
+            [make_track(track_id=str(i)) for i in range(5)]
         ),
     )
 
@@ -456,6 +455,9 @@ def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     assert response.status_code == 200
     assert "event: tracks" in response.text
     assert '"artist": "BTS"' in response.text
+    assert '"reason"' not in response.text
+    assert len(fake_openai.responses.calls) == 1
+    assert '"reason"' not in fake_openai.responses.calls[0]["input"]
     assert "event: done" in response.text
     # 최종 답변 생성(stream_lookup_answer)도 recommend처럼 body.message가 아니라
     # classify가 재구성한 recommend_query를 받아야 한다.

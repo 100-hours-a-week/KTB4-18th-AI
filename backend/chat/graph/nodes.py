@@ -32,18 +32,15 @@ def embed_node(state: RecommendationState) -> dict:
 
 
 def search_node(state: RecommendationState) -> dict:
-    """query_vector로 pgvector 검색을 수행해 후보 곡과 무드 태그를 가져온다.
+    """query_vector로 pgvector 검색을 수행해 후보 곡을 가져온다.
     classify_node가 뽑은 genres/min_year/max_year를 메타데이터 조건으로 같이 넘긴다."""
     exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
-    tracks, mood_tags = vector_recommendation(
-        state["query_vector"], state["recommend_query"], exclude_ids=exclude_ids,
+    tracks = vector_recommendation(
+        state["query_vector"], exclude_ids=exclude_ids,
         genres=state.get("recommend_genres"), min_year=state.get("recommend_min_year"),
         max_year=state.get("recommend_max_year"),
     )
-    return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
-
-
-LOOKUP_FALLBACK_REASON = "조회하신 곡 정보예요."
+    return {"tracks": tracks, "shown_track_ids": [t.track_id for t in tracks]}
 
 
 def lookup_node(state: RecommendationState) -> dict:
@@ -90,7 +87,6 @@ def lookup_node(state: RecommendationState) -> dict:
             artwork_url=row.artwork_url,
             preview_url=row.preview_url,
             store_url=row.store_url,
-            reason=LOOKUP_FALLBACK_REASON,
         )
         for row in rows[:5]
     ]
