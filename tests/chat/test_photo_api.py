@@ -106,7 +106,7 @@ def test_real_stream_searches_after_scene_and_reports_failure(monkeypatch):
     monkeypatch.setattr(vlm, "analyze_image", analyze)
     monkeypatch.setattr(service, "recommend_scene", lambda *_args: [Track(
         track_id="1", title="test", artist="test", artwork_url=None,
-        preview_url=None, store_url=None, reason="test").model_dump()])
+        preview_url=None, store_url=None).model_dump()])
     with TestClient(app) as client:
         body = {"thread_id": str(uuid4()), "request_id": str(uuid4())}
         response = client.post("/v1/chat/images", data=body, files={"image": ("x.jpg", jpeg(), "image/jpeg")})
@@ -136,16 +136,15 @@ def test_real_stream_searches_after_scene_and_reports_failure(monkeypatch):
 def test_photo_graph_reuses_search_and_context_for_next_text(monkeypatch):
     calls = []
     track = Track(track_id="1", title="test", artist="test", artwork_url=None,
-                  preview_url=None, store_url=None, reason="test")
+                  preview_url=None, store_url=None)
     monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
     monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
 
     def search(*_args, **kwargs):
         calls.append(kwargs["exclude_ids"])
-        return [track], {}
+        return [track]
 
     monkeypatch.setattr(nodes, "vector_recommendation", search)
-    monkeypatch.setattr(nodes, "assign_reasons", lambda *_args: None)
     thread = str(uuid4())
     config = {"configurable": {"thread_id": thread, "client": object()}}
     initial = {"messages": ["사진: 강변"], "recommend_query": "잔잔한 음악",
@@ -162,6 +161,19 @@ def test_photo_graph_reuses_search_and_context_for_next_text(monkeypatch):
     assert seen == ["사진: 강변", "더 신나게"]
     workflow.build_graph(photo=True).invoke(initial, config=config)
     assert calls == [set(), {1}]
+
+
+def test_photo_search_needs_no_text_llm_settings(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("OPENROUTER_LLM_API_KEY", raising=False)
+    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
+    track = Track(track_id="1", title="test", artist="test", artwork_url=None,
+                  preview_url=None, store_url=None)
+    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **_kwargs: [track])
+    result = service.recommend_scene(scene(), str(uuid4()))
+    assert result == [track.model_dump()]
+    assert "reason" not in result[0]
 
 
 def post_photo(client, body, data=None, mime="image/jpeg"):

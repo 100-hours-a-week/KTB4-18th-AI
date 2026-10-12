@@ -10,7 +10,6 @@ from backend.chat.graph.nodes import (
     classify_node,
     embed_node,
     lookup_node,
-    reason_node,
     search_node,
 )
 from backend.chat.graph.state import RecommendationState
@@ -54,7 +53,6 @@ def build_graph(*, photo: bool = False):
     graph.add_node("classify", classify_node)
     graph.add_node("embed", embed_node)
     graph.add_node("search", search_node)
-    graph.add_node("reason", reason_node)
     graph.add_node("lookup", lookup_node)
 
     # NOTE: 사진은 VLM이 만든 검색 조건으로 진입하므로 텍스트 의도 분류를 생략한다.
@@ -63,11 +61,7 @@ def build_graph(*, photo: bool = False):
         "classify", route_by_intent, {"embed": "embed", "lookup": "lookup", END: END},
     )
     graph.add_edge("embed", "search")
-    graph.add_edge("search", "reason")
-    graph.add_edge("reason", END)
+    graph.add_edge("search", END)
     graph.add_edge("lookup", END)
-
-    # TODO: tracks가 비어있으면 reason을 건너뛰고 바로 END로 가는
-    # 조건부 분기(add_conditional_edges)를 추가할지 검토.
 
     return graph.compile(checkpointer=_checkpointer)

@@ -6,7 +6,6 @@ from langchain_core.runnables import RunnableConfig
 
 from backend.chat.graph.state import RecommendationState
 from db.types import Track
-from backend.recommendation.reasons import assign_reasons
 from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.openrouter import get_embedding_client
@@ -33,26 +32,15 @@ def embed_node(state: RecommendationState) -> dict:
 
 
 def search_node(state: RecommendationState) -> dict:
-    """query_vector로 pgvector 검색을 수행해 후보 곡과 무드 태그를 가져온다.
+    """query_vector로 pgvector 검색을 수행해 후보 곡을 가져온다.
     classify_node가 뽑은 genres/min_year/max_year를 메타데이터 조건으로 같이 넘긴다."""
     exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
-    tracks, mood_tags = vector_recommendation(
-        state["query_vector"], state["recommend_query"], exclude_ids=exclude_ids,
+    tracks = vector_recommendation(
+        state["query_vector"], exclude_ids=exclude_ids,
         genres=state.get("recommend_genres"), min_year=state.get("recommend_min_year"),
         max_year=state.get("recommend_max_year"),
     )
-    return {"tracks": tracks, "mood_tags": mood_tags, "shown_track_ids": [t.track_id for t in tracks]}
-
-
-def reason_node(state: RecommendationState, config: RunnableConfig) -> dict:
-    """검색된 곡마다 추천 이유를 채운다."""
-
-    tracks = state["tracks"]
-    assign_reasons(config["configurable"]["client"], state["recommend_query"], tracks, state["mood_tags"])
-    return {"tracks": tracks}
-
-
-LOOKUP_FALLBACK_REASON = "조회하신 곡 정보예요."
+    return {"tracks": tracks, "shown_track_ids": [t.track_id for t in tracks]}
 
 
 def lookup_node(state: RecommendationState) -> dict:
@@ -99,7 +87,6 @@ def lookup_node(state: RecommendationState) -> dict:
             artwork_url=row.artwork_url,
             preview_url=row.preview_url,
             store_url=row.store_url,
-            reason=LOOKUP_FALLBACK_REASON,
         )
         for row in rows[:5]
     ]
@@ -112,4 +99,4 @@ def lookup_node(state: RecommendationState) -> dict:
 
 # NOTE: 최종 답변 생성(stream_answer/stream_lookup_answer)은 SSE 스트리밍이라
 # dict를 반환하는 일반 노드 계약과 맞지 않아 그래프 밖(main.py)에서 그대로
-# 처리한다. 그래프는 reason_node 또는 lookup_node에서 끝난다.
+# 처리한다. 그래프는 search_node 또는 lookup_node에서 끝난다.

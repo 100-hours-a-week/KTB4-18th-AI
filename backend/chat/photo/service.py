@@ -6,7 +6,6 @@ NOTE: 채팅은 그래프 실행(service)과 SSE 생성(streaming)을 나누지�
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
@@ -14,14 +13,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 import httpx
 from fastapi import HTTPException, UploadFile
-from openai import OpenAI
 
 from backend.chat.graph.workflow import build_graph
 from backend.chat.photo import image, vlm
 from backend.chat.photo.schemas import Scene
 from backend.chat.streaming import sse
-from backend.core.errors import _error, _model_unavailable
-from backend.providers.openrouter import OPENROUTER_BASE_URL
+from backend.core.errors import _error
 
 logger = logging.getLogger(__name__)
 # TODO: 처리 슬롯·중복 기록·채팅별 진행 여부는 프로세스 단위다. 다중 워커 배포 전 BE·공유 저장소로 옮긴다.
@@ -39,17 +36,13 @@ REJECT_MESSAGES = {
 
 
 def recommend_scene(scene: Scene, thread_id: str) -> list[dict]:
-    """사진 맥락을 메모리에 남기고 기존 임베딩·검색·추천 이유를 재사용한다."""
-    key, model = os.getenv("OPENROUTER_LLM_API_KEY", ""), os.getenv("LLM_MODEL", "")
-    if not key.strip() or not model.strip():
-        raise _model_unavailable()
-    client = OpenAI(api_key=key, base_url=OPENROUTER_BASE_URL, timeout=15, max_retries=0)
+    """사진 맥락을 메모리에 남기고 기존 임베딩·검색을 재사용한다."""
     result = build_graph(photo=True).invoke({
         "message": scene.music_query,
         "messages": ["사진의 장소 맥락: " + scene.model_dump_json()],
         "intent": "recommend", "recommend_query": scene.music_query,
         "recommend_genres": None, "recommend_min_year": None, "recommend_max_year": None,
-    }, config={"configurable": {"thread_id": thread_id, "client": client}})
+    }, config={"configurable": {"thread_id": thread_id}})
     return [track.model_dump() for track in result["tracks"]]
 
 
