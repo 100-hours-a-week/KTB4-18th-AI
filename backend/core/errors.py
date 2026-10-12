@@ -29,7 +29,7 @@ def _catalog_unavailable() -> HTTPException:
 
 def _error(status: int, reason: str, message: str) -> HTTPException:
     """V1 공통 오류 형식으로 전사 실패를 표현한다."""
-    codes = {400: "INVALID_REQUEST", 413: "PAYLOAD_TOO_LARGE",
+    codes = {400: "INVALID_REQUEST", 409: "CONFLICT", 413: "PAYLOAD_TOO_LARGE",
              415: "UNSUPPORTED_MEDIA_TYPE", 503: "SERVICE_UNAVAILABLE"}
     return HTTPException(status_code=status, detail={
         "code": codes[status], "message": message, "details": {"reason": reason},
