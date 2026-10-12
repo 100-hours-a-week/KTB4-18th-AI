@@ -49,83 +49,59 @@ sequenceDiagram
 
 ### 텍스트 음악 추천
 
-사용자가 전송을 확정한 텍스트를 기반으로 음악 추천을 실행한다. AI 서버는 추천 조건과 음악 후보를 생성하고, iTunes에서 실제 제공되는 곡인지 확인한 뒤 정제된 추천 결과를 반환한다.
+사용자 메시지와 같은 채팅의 대화 맥락을 바탕으로 검색 조건을 추출한다. 곡은 PostgreSQL 카탈로그에서 선정하며, 종합 안내는 검색 이후 별도 LLM으로 생성한다. 곡별 이유 생성 호출은 제거했다.
 
 ```mermaid
 sequenceDiagram
-    participant U as 사용자
-    participant F as 모바일 클라이언트
     participant S as Spring Backend
     participant A as AI Server
-    participant W as 추천 워크플로우
-    participant R as RAG Module
-    participant L as LLM API 또는 모델
-    participant M as iTunes API
+    participant L as 분류·안내 LLM
+    participant E as Gemini 임베딩
+    participant D as PostgreSQL
 
-    U->>F: 추천 메시지 입력
-    U->>F: 전송 버튼 선택
-    F->>S: 확정 메시지 전송
-    S->>S: 사용자 인증 및 요청 확인
     S->>A: POST /v1/chat/messages
-    A->>A: 입력값 검증
-
-    alt 입력값이 유효하지 않음
-        A-->>S: 400 INVALID_REQUEST
-        S-->>F: 입력 오류 반환
-        F-->>U: 메시지 수정 안내
-    else 입력값이 유효함
-        A->>W: 추천 워크플로우 시작
-
-        opt 내부 음악 데이터가 구축된 경우
-            W->>R: 사용자 메시지 기반 검색
-            R-->>W: 관련 음악 컨텍스트
+    A->>A: 요청 검증·thread_id 대화 상태 확인
+    A->>L: 대화 맥락·지원 장르 목록으로 의도와 조건 추출
+    L-->>A: intent·검색 문장·장르·연도·안내 조건
+    alt 지원 가능한 추천
+        A->>E: 재구성한 검색 문장 임베딩
+        E-->>A: 3072차원 벡터
+        A->>D: pgvector 검색·장르·연도·이전 곡 제외
+        D-->>A: 후보 곡
+        A->>A: 중복 제거·최대 5곡, 부족하면 장르 조건만 완화
+        alt 추천곡 있음
+            A->>L: 검색 문장·선정 곡·사용자 컨텍스트로 종합 안내 생성
+            L-->>A: 안내 문장 스트리밍
+            A-->>S: SSE text → tracks → done
+        else 추천곡 없음
+            A-->>S: 고정 안내 text → tracks=[] → done
         end
-
-        W->>L: 사용자 메시지와 검색 컨텍스트 전달
-
-        alt 모델 호출 실패
-            L-->>W: 모델 오류
-            W-->>A: 모델 제공자 오류
-            A-->>S: 503 SERVICE_UNAVAILABLE · MODEL_UNAVAILABLE
-            S-->>F: 추천 일시 중단 안내
-            F-->>U: 잠시 후 다시 시도 안내
-        else 모델 호출 성공
-            L-->>W: 추천 조건·음악 후보·추천 이유
-            W->>M: 제목·아티스트 또는 트랙 ID 조회
-
-            alt iTunes 조회 실패
-                M-->>W: 조회 오류
-                W-->>A: 음악 제공자 오류
-                A-->>S: 503 SERVICE_UNAVAILABLE · MUSIC_CATALOG_UNAVAILABLE
-                S-->>F: 추천 일시 중단 안내
-                F-->>U: 잠시 후 다시 시도 안내
-            else 조회 가능한 곡이 없음
-                M-->>W: 검색 결과 없음
-                W-->>A: 빈 추천 결과
-                A-->>S: SSE text → tracks=[] → done
-                S-->>F: SSE 이벤트 전달
-                F-->>U: 다른 분위기 입력 안내
-            else iTunes 조회 성공
-                M-->>W: 실제 곡 정보와 미리듣기 URL
-                W->>W: 중복 제거 및 필수 필드 검증
-                W->>W: 추천 결과 최대 5개 적용
-                W-->>A: 최종 추천 결과
-                A-->>S: SSE text 반복 → tracks → done
-                S-->>F: SSE 이벤트 전달
-                F-->>U: 추천곡 카드 표시
+    else 곡·아티스트 조회
+        alt 조회 대상이 모호함
+            A-->>S: 구체화 요청 text → tracks=[] → done
+        else 조회 대상 있음
+            A->>D: 제목·아티스트 조회
+            D-->>A: 조회 결과
+            alt 조회곡 있음
+                A->>L: 조회된 곡 정보로 안내 생성
+                L-->>A: 조회 안내 스트리밍
+                A-->>S: SSE text → tracks → done
+            else 조회곡 없음
+                A-->>S: 찾지 못함 안내 text → tracks=[] → done
             end
         end
+    else 사용법·정보 부족·미지원·범위 밖
+        A-->>S: 고정 안내 text → tracks=[] → done
     end
 ```
 
 ### 설계 이유
 
-- 사용자가 전송을 확정한 메시지만 추천에 사용한다.
-- 모델이 생성한 곡을 그대로 반환하지 않고 iTunes에서 실제 곡 정보를 확인한다.
-- 음악 제목, 아티스트, 앨범 이미지와 미리듣기 URL을 정규화하여 반환한다.
-- 챗봇 안내 문장은 `text` 이벤트로 스트리밍하고, 추천곡 카드는 검증이 끝난 배열을 `tracks` 이벤트로 한 번만 반환한다.
-- 검색 결과가 없는 경우는 장애가 아니므로 `200`과 빈 목록, 안내 메시지로 처리한다.
-- RAG는 내부 음악 데이터가 구축되고 도입 효과가 확인된 경우에만 실행한다.
+- 일반 추천 성공 경로는 생성 LLM 2회(의도 분류·종합 안내)와 임베딩 1회를 사용한다. 빈 결과·고정 안내 분기는 종합 안내 LLM을 호출하지 않는다.
+- `tracks[].reason`은 추천·조회 응답에서 제거했다. 요청 형식과 `text` → `tracks` → `done` 순서는 유지한다.
+- 곡 조회는 원래 곡별 이유 생성 호출이 없었으며, 결과가 있으면 기존 조회 안내 LLM을 사용한다.
+- SSE 시작 전 오류는 HTTP 오류 응답, 스트리밍 중 오류는 `error` 이벤트로 반환하며 정상 종료로 처리하지 않는다.
+- 곡은 PostgreSQL 카탈로그의 벡터 검색·조건 필터·중복 제거로 선정한다. 실시간 iTunes 조회나 곡별 이유 생성은 선정 과정에 사용하지 않는다.
 
 </details>
 
@@ -511,6 +487,8 @@ V1 텍스트 추천은 `200 OK` 연결을 유지하면서 다음 이벤트를 �
 
 #### `track` 객체
 
+추천·조회 응답에서 곡별 `reason` 필드를 제거했다. BE·FE는 해당 필드를 필수로 파싱하거나 표시하지 않아야 한다. 오류 응답의 `details.reason`과 사진 판정의 거절 사유는 별도 필드이며 제거 대상이 아니다. 곡별 이유 생성 호출·응답 필드 제거는 사진 추천 경로에는 아직 반영하지 않았으며, 텍스트 추천 반영 후 적용한다.
+
 | 필드 | 타입 | 필수 여부 | 설명 |
 |---|---|---|---|
 | `title` | string | 필수 | iTunes가 반환한 곡 제목 원문 |
@@ -518,8 +496,7 @@ V1 텍스트 추천은 `200 OK` 연결을 유지하면서 다음 이벤트를 �
 | `track_id` | string | 필수 | iTunes 트랙 ID를 숫자 문자열로 반환 |
 | `preview_url` | string 또는 null | 필수 | 미리듣기 URL. 제공되지 않으면 `null` |
 | `artwork_url` | string 또는 null | 필수 | HTTPS 앨범 이미지 URL. 제공 시 600×600 규격 사용 |
-| `store_url` | string | 필수 | 곡 상세 페이지로 연결되는 HTTPS URL |
-| `reason` | string | 필수 | 현재 입력·맥락과 해당 곡이 어울리는 이유 |
+| `store_url` | string 또는 null | 필수 | 곡 상세 페이지 URL. 추천 결과는 값이 있으며 조회 결과는 `null`일 수 있음 |
 
 ```text
 event: text
@@ -529,7 +506,7 @@ event: text
 data: {"delta":"어울리는 곡을 골라봤어요."}
 
 event: tracks
-data: {"tracks":[{"title":"노을","artist":"카더가든","track_id":"1234567890","preview_url":"https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview/example1.m4a","artwork_url":"https://is1-ssl.mzstatic.com/image/thumb/Music/example1/600x600bb.jpg","store_url":"https://music.apple.com/kr/album/example1?i=1234567890","reason":"해질녘의 따뜻한 색감과 잔잔한 기타 사운드가 잘 어울려요."}]}
+data: {"tracks":[{"title":"노을","artist":"카더가든","track_id":"1234567890","preview_url":"https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview/example1.m4a","artwork_url":"https://is1-ssl.mzstatic.com/image/thumb/Music/example1/600x600bb.jpg","store_url":"https://music.apple.com/kr/album/example1?i=1234567890"}]}
 
 event: done
 data: {}

@@ -94,7 +94,7 @@ FROM tracks WHERE track_id = ANY($1);
 오디오에서 추출한 값이며 사람이 붙인 라벨이 아니다. 용도는 두 가지다.
 
 - **필터**: `WHERE mood_tags::jsonb ? 'relaxing'` (컬럼이 `json`이라 `?` 연산자를 쓰려면 캐스팅 필요) 또는 `WHERE (mood_tags->>'calm')::float > 0.5`
-- **추천 이유 생성**: LLM에 넘겨 설명 문장을 만든다
+- **추천 이유 생성**: 곡별 이유 생성 호출을 제거해 현재 온라인 추천에서는 쓰지 않는다. 컬럼과 적재 코드는 유지한다
 
 태그 어휘는 56개로 고정되어 있다(MTG-Jamendo mood/theme). `sad`, `energetic`, `dark`, `epic`, `dream`, `film` 등.
 
