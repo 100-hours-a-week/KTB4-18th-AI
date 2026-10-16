@@ -42,7 +42,6 @@ class RecommendationState(TypedDict, total=False):
 
     # ── search_node가 채움 ──
     tracks: list[Track]
-    mood_tags: dict[str, dict]
     shown_track_ids: Annotated[list[str], _cap_shown_ids]
 
     # ── lookup_node가 채움 ──

@@ -23,11 +23,10 @@ def test_search_result_and_filters_without_database(monkeypatch):
                                                 (row(3, "Other"), 0.3)])
 
     session = Session()
-    tracks, moods = search(session, [1.0] * 3072, "quiet", exclude_ids={99},
+    tracks = search(session, [1.0] * 3072, exclude_ids={99},
                            min_year=2020, genres=["K-Pop"])
     assert [track.track_id for track in tracks] == ["1", "3"]
-    assert [track.reason for track in tracks] == ["'quiet' 상황에 어울리는 곡입니다."] * 2
-    assert moods == {"1": {"calm": 0.8}, "3": {"calm": 0.8}}
+    assert all("reason" not in track.model_dump() for track in tracks)
     sql = str(session.statements[0])
     assert "release_date" in sql and "genre" in sql and "NOT IN" in sql
 
@@ -56,7 +55,7 @@ def test_search_fills_without_genre_when_genre_results_are_short(monkeypatch):
             return SimpleNamespace(all=lambda: rows)
 
     session = Session()
-    tracks, _ = search(session, [1.0] * 3072, "잔잔한 발라드", genres=["Singer/Songwriter"], max_year=2014)
+    tracks = search(session, [1.0] * 3072, genres=["Singer/Songwriter"], max_year=2014)
 
     assert [track.track_id for track in tracks] == ["1", "2", "3", "4", "5"]
     first, second = (str(stmt) for stmt in session.statements)
@@ -78,7 +77,7 @@ def test_search_does_not_requery_when_genre_results_are_enough(monkeypatch):
             return SimpleNamespace(all=lambda: [(_row(i), 0.1 * i) for i in range(1, 7)])
 
     session = Session()
-    tracks, _ = search(session, [1.0] * 3072, "신나는 케이팝", genres=["K-Pop"])
+    tracks = search(session, [1.0] * 3072, genres=["K-Pop"])
 
     assert len(tracks) == 5
     assert len(session.statements) == 1
@@ -95,7 +94,7 @@ def test_search_applies_year_range(monkeypatch):
             return SimpleNamespace(all=lambda: [])
 
     session = Session()
-    search(session, [1.0] * 3072, "90년대 노래", min_year=1990, max_year=1999)
+    search(session, [1.0] * 3072, min_year=1990, max_year=1999)
     sql = str(session.statement)
     assert "release_date >=" in sql and "release_date <=" in sql
 
