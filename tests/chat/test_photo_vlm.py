@@ -28,7 +28,7 @@ BUDGET = {"error": {"code": 403, "message": "Budget limit exceeded (weekly limit
     (403, {"error": {"code": 403, "message": "Key limit exceeded"}}, True),
     (403, {"error": {"code": 403, "message": "Forbidden"}}, False),
 ])
-def test_fallback_only_for_transient_and_billing_errors(monkeypatch, status, body, should_fallback):
+def test_fallback_only_for_transient_and_billing_errors(monkeypatch, caplog, status, body, should_fallback):
     for name in ("PHOTO_FALLBACK_URL", "PHOTO_FALLBACK_MODEL", "PHOTO_FALLBACK_API_KEY"):
         monkeypatch.setenv(name, "test")
     calls = []
@@ -41,9 +41,12 @@ def test_fallback_only_for_transient_and_billing_errors(monkeypatch, status, bod
         return scene()
 
     monkeypatch.setattr(vlm, "call_vlm", call)
+    caplog.set_level("INFO", logger="uvicorn.error")
     if should_fallback:
         assert asyncio.run(vlm.analyze_image(b"image"))[1] == "fallback"
         assert calls == [False, True]
+        reason = "unavailable" if status == 429 or status >= 500 else "billing"
+        assert f"Photo fallback: reason={reason} main_status={status}" in caplog.text
     else:
         with pytest.raises(httpx.HTTPStatusError):
             asyncio.run(vlm.analyze_image(b"image"))

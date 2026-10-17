@@ -147,7 +147,10 @@ async def analyze_image(image: bytes) -> tuple[Scene, str]:
             logger.warning("Photo main path hit a billing limit: status=%s", error.response.status_code)
         if not fallback_ready or reason is None:
             raise
+        main_status = error.response.status_code
     except httpx.TransportError:
         if not fallback_ready:
             raise
+        reason, main_status = "transport", None
+    logger.info("Photo fallback: reason=%s main_status=%s", reason, main_status)
     return await call_vlm(image, fallback=True), "fallback"

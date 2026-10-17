@@ -297,3 +297,24 @@ def test_provider_block_is_a_neutral_rejection_not_an_error(monkeypatch):
         assert '"reason": "MODEL_RESPONSE_INVALID"' in broken.text
         assert "event: rejected" not in broken.text
     assert_slots_released()
+
+
+def test_request_log_has_path_and_result_without_content(monkeypatch, caplog):
+    async def fallback_scene(_image):
+        return scene(), "fallback"
+
+    async def cold_fallback(_image):
+        response = httpx.Response(503, request=httpx.Request("POST", "https://test.invalid"))
+        raise httpx.HTTPStatusError("cold", request=response.request, response=response)
+
+    monkeypatch.setattr(service, "recommend_scene", lambda *_args: [])
+    caplog.set_level("INFO", logger="uvicorn.error")
+    with TestClient(app) as client:
+        for analyze in (fallback_scene, cold_fallback):
+            monkeypatch.setattr(vlm, "analyze_image", analyze)
+            client.post("/v1/chat/images", data={"thread_id": str(uuid4()), "request_id": str(uuid4())},
+                        files={"image": ("x.jpg", jpeg(), "image/jpeg")})
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:")]
+    assert lines[0].startswith("Photo request: provider=fallback outcome=ok status=None")
+    assert "outcome=MODEL_UNAVAILABLE status=503 error=HTTPStatusError" in lines[1]
+    assert scene().music_query not in caplog.text
