@@ -87,6 +87,27 @@ def completion(content, finish_reason="stop", **message):
                                                   "message": {"content": content, **message}}]})
 
 
+@pytest.mark.parametrize("photo_key,expected", [
+    ("photo-key", "Bearer photo-key"), (None, "Bearer test-key"), ("<YOUR_PHOTO_VLM_API_KEY>", "Bearer test-key"),
+])
+def test_photo_key_is_separate_from_chat_key(monkeypatch, photo_key, expected):
+    seen = []
+    monkeypatch.setenv("PHOTO_VLM_MODEL", "test/model")
+    monkeypatch.setenv("OPENROUTER_LLM_API_KEY", "test-key")
+    if photo_key is None:
+        monkeypatch.delenv("PHOTO_VLM_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("PHOTO_VLM_API_KEY", photo_key)
+
+    def handler(request):
+        seen.append(request.headers["Authorization"])
+        return completion(scene().model_dump_json())
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs))
+    asyncio.run(vlm.call_vlm(b"image"))
+    assert seen == [expected]
+
+
 @pytest.mark.parametrize("response,expected", [
     (httpx.Response(403, json={"error": {"code": 403, "message": "flagged",
                                          "metadata": {"reasons": ["sexual"], "flagged_input": "..."}}}),

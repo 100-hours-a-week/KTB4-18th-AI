@@ -34,7 +34,10 @@ def _is_policy_block(body: object) -> bool:
 async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
     """OpenRouter 또는 OpenAI 호환 자체 VLM에 동일한 분석 계약을 전달한다."""
     url = os.getenv("PHOTO_FALLBACK_URL", "") if fallback else OPENROUTER_BASE_URL
-    key = os.getenv("PHOTO_FALLBACK_API_KEY", "") if fallback else os.getenv("OPENROUTER_LLM_API_KEY", "")
+    # NOTE: 사진 전용 키가 있으면 텍스트 채팅과 한도·비용을 분리한다. 없으면 기존 LLM 키를 쓴다.
+    photo_key = os.getenv("PHOTO_VLM_API_KEY", "").strip()
+    main_key = photo_key if photo_key and not photo_key.startswith("<") else os.getenv("OPENROUTER_LLM_API_KEY", "")
+    key = os.getenv("PHOTO_FALLBACK_API_KEY", "") if fallback else main_key
     model_var = "PHOTO_FALLBACK_MODEL" if fallback else "PHOTO_VLM_MODEL"
     model = os.getenv(model_var, "").strip()
     # NOTE: 비용이 발생하는 모델은 환경변수로 명시한 경우에만 호출한다.
