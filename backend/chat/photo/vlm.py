@@ -12,6 +12,10 @@ from backend.core.errors import _error
 from backend.providers.openrouter import OPENROUTER_BASE_URL
 
 logger = logging.getLogger("uvicorn.error")
+MAIN_TIMEOUT_S = 10
+# NOTE: 폴백 제한은 E4B · L40S 측정 최대(기동 직후 첫 요청 9.6초)에 약 25% 여유를 둔 값이다.
+# 서버가 꺼져 있으면 Modal이 즉시 503을 돌려주므로 기동을 기다리지 않고 실패한다.
+FALLBACK_TIMEOUT_S = 12
 
 
 class ProviderBlocked(Exception):
@@ -105,7 +109,7 @@ async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
     }
     if not fallback:
         payload["provider"] = {"require_parameters": True}
-    async with httpx.AsyncClient(timeout=20 if fallback else 10) as client:
+    async with httpx.AsyncClient(timeout=FALLBACK_TIMEOUT_S if fallback else MAIN_TIMEOUT_S) as client:
         response = await client.post(url.rstrip("/") + "/chat/completions", json=payload,
                                      headers={"Authorization": "Bearer " + key})
     try:
