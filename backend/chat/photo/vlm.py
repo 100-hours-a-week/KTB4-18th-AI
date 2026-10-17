@@ -1,6 +1,7 @@
 """VLM 장면 분석 호출, 자체 VLM 폴백, 공급자 오류 분류."""
 
 import base64
+import logging
 import os
 
 import httpx
@@ -9,6 +10,8 @@ from pydantic import ValidationError
 from backend.chat.photo.schemas import Scene
 from backend.core.errors import _error
 from backend.providers.openrouter import OPENROUTER_BASE_URL
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class ProviderBlocked(Exception):
@@ -29,6 +32,29 @@ def _is_policy_block(body: object) -> bool:
     markers = {str(value) for value in (error.get("code"), error.get("type"), *metadata.values())
                if isinstance(value, (str, int))}
     return bool(metadata.get("reasons")) or bool(markers & {"content_policy_violation", "refusal"})
+
+
+def _is_budget_limit(response: httpx.Response) -> bool:
+    """OpenRouter 403 중 키·워크스페이스·가드레일 예산 소진만 고른다."""
+    try:
+        error = response.json().get("error")
+    except (ValueError, AttributeError):
+        return False
+    if not isinstance(error, dict):
+        return False
+    metadata = error.get("metadata") if isinstance(error.get("metadata"), dict) else {}
+    # NOTE: 문서상 예산 오류는 metadata.limit_source를 주고, 메시지는 "... limit exceeded" 형태다.
+    return "limit_source" in metadata or "limit exceeded" in str(error.get("message", "")).lower()
+
+
+def _fallback_reason(response: httpx.Response) -> str | None:
+    """주 경로 오류 중 다른 공급자로 우회하면 해결되는 것만 사유를 돌려준다."""
+    status = response.status_code
+    if status == 429 or status >= 500:
+        return "unavailable"
+    if status == 402 or (status == 403 and _is_budget_limit(response)):
+        return "billing"
+    return None
 
 
 async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
@@ -103,7 +129,7 @@ async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
 
 
 async def analyze_image(image: bytes) -> tuple[Scene, str]:
-    """폴백 설정이 완비된 경우에만 429·5xx·통신 실패를 한 번 우회한다."""
+    """폴백 설정이 완비된 경우에만 일시 장애·결제 한도·통신 실패를 한 번 우회한다."""
     fallback_ready = all(
         (value := os.getenv(name, "").strip()) and not value.startswith("<")
         for name in ("PHOTO_FALLBACK_URL", "PHOTO_FALLBACK_MODEL", "PHOTO_FALLBACK_API_KEY")
@@ -111,7 +137,11 @@ async def analyze_image(image: bytes) -> tuple[Scene, str]:
     try:
         return await call_vlm(image), "openrouter"
     except httpx.HTTPStatusError as error:
-        if not fallback_ready or (error.response.status_code != 429 and error.response.status_code < 500):
+        reason = _fallback_reason(error.response)
+        if reason == "billing":
+            # NOTE: 결제·예산 한도는 저절로 풀리지 않는 운영 문제라 폴백 여부와 관계없이 경고로 남긴다.
+            logger.warning("Photo main path hit a billing limit: status=%s", error.response.status_code)
+        if not fallback_ready or reason is None:
             raise
     except httpx.TransportError:
         if not fallback_ready:

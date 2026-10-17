@@ -17,8 +17,18 @@ def scene():
                        recommendation_context="사진에 보이는 나무에서 차분한 분위기가 느껴져요. 잔잔한 음악 위주로 찾아볼게요.")
 
 
-@pytest.mark.parametrize("status,should_fallback", [(429, True), (503, True), (400, False), (401, False)])
-def test_fallback_only_for_transient_errors(monkeypatch, status, should_fallback):
+BUDGET = {"error": {"code": 403, "message": "Budget limit exceeded (weekly limit).",
+                    "metadata": {"limit_source": "openrouter_guardrail_budget"}}}
+
+
+@pytest.mark.parametrize("status,body,should_fallback", [
+    (429, None, True), (503, None, True), (400, None, False), (401, None, False),
+    (402, {"error": {"code": 402, "message": "Insufficient credits"}}, True),
+    (403, BUDGET, True),
+    (403, {"error": {"code": 403, "message": "Key limit exceeded"}}, True),
+    (403, {"error": {"code": 403, "message": "Forbidden"}}, False),
+])
+def test_fallback_only_for_transient_and_billing_errors(monkeypatch, status, body, should_fallback):
     for name in ("PHOTO_FALLBACK_URL", "PHOTO_FALLBACK_MODEL", "PHOTO_FALLBACK_API_KEY"):
         monkeypatch.setenv(name, "test")
     calls = []
@@ -26,7 +36,7 @@ def test_fallback_only_for_transient_errors(monkeypatch, status, should_fallback
     async def call(_image, *, fallback=False):
         calls.append(fallback)
         if not fallback:
-            response = httpx.Response(status, request=httpx.Request("POST", "https://test.invalid"))
+            response = httpx.Response(status, json=body, request=httpx.Request("POST", "https://test.invalid"))
             raise httpx.HTTPStatusError("failure", request=response.request, response=response)
         return scene()
 
