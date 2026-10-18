@@ -85,7 +85,7 @@ def warmup() -> None:
     image=image,
     gpu=PROFILE["gpu"],
     port=VLLM_PORT,
-    # NOTE: 폴백은 주 경로가 실패할 때만 깨어난다. 한 번 깨면 Modal 최대값(20분)만큼 켜 두어 장애 중 이어지는 요청을 받는다.
+    # NOTE: 폴백은 주 경로가 실패할 때만 깨어난다. 요청 없이 20분(Modal 최대값)이 지나야 꺼지게 해 장애 중 이어지는 요청을 받는다.
     # 실행 중 변경: modal.Server.from_name(...).update_autoscaler(scaledown_window=...), 다음 배포 때 이 값으로 돌아온다.
     scaledown_window=20 * MINUTES,
     startup_timeout=15 * MINUTES,

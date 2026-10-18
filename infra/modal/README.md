@@ -16,7 +16,7 @@
 
 ## 측정값
 
-2026-10-18, `e4b-l40s`, 합성 사진 28장 기준입니다.
+2026-10-18, `e4b-l40s`, 합성 사진 28장 기준입니다. 원본 측정 기록은 저장소에 포함하지 않았습니다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -40,13 +40,17 @@ VLM_PROFILE=e4b-l40s uvx modal deploy --env dev infra/modal/vlm_server.py
 VLM_PROFILE=e4b-l40s uvx modal deploy --env main infra/modal/vlm_server.py
 ```
 
-배포 직후 서버는 꺼져 있습니다. 첫 요청 때 스냅샷을 만들며 7~9분 걸리므로, 배포 뒤 아래 예열을 한 번 합니다.
+배포 직후 서버는 꺼져 있습니다. 꺼진 서버는 첫 요청에 503을 돌려주고 그때 기동을 시작합니다. 첫 기동은 스냅샷을 만들며 7~9분 걸리므로, 배포 뒤 아래 명령으로 **준비가 끝날 때까지** 확인합니다(최대 15분).
 
 ```bash
-curl -H "Authorization: Bearer $PHOTO_FALLBACK_API_KEY" "$PHOTO_FALLBACK_URL/models"
+for i in $(seq 1 90); do
+  curl -sf -H "Authorization: Bearer $PHOTO_FALLBACK_API_KEY" "$PHOTO_FALLBACK_URL/models" | grep -q photo-vlm \
+    && echo "준비 완료" && break
+  sleep 10
+done
 ```
 
-응답 목록에 `photo-vlm`이 있으면 정상입니다.
+"준비 완료"가 나오지 않으면 Modal 대시보드의 앱 로그를 확인합니다. 장애 테스트에서는 AI 서버의 사진 API 응답 중 `scene` 이벤트의 `provider`가 `fallback`인지까지 확인합니다.
 
 ## AI 서버 환경변수
 
@@ -61,7 +65,7 @@ curl -H "Authorization: Bearer $PHOTO_FALLBACK_API_KEY" "$PHOTO_FALLBACK_URL/mod
 
 ## 예열과 유지
 
-평소에는 주 경로가 실패할 때만 깨어나고, 깨어난 뒤 20분 동안 켜져 있습니다. 시연이나 장애 테스트 전에는 미리 켜 둡니다.
+평소에는 주 경로가 실패할 때만 깨어나고, **요청 없이 20분이 지나면** 다시 꺼집니다. 시연이나 장애 테스트 전에는 미리 켜 두고, 위의 준비 확인 명령으로 준비 완료를 확인합니다.
 
 ```bash
 # 켜 두기 (L40S 시간당 약 $1.95)
@@ -96,3 +100,4 @@ Starter 요금제에는 Environment별 예산이 없어 워크스페이스 한�
 - GPU 메모리 스냅샷은 Modal 알파 기능입니다. 복원되지 않으면 일반 기동(약 4분)으로 동작합니다.
 - 장애 시 사용자 사진이 미국(Modal us-east)으로 전송됩니다. 평소 주 경로도 해외 공급자를 사용합니다.
 - 스냅샷 전후 처리를 위해 `VLLM_SERVER_DEV_MODE`로 vLLM 관리용 경로가 열립니다. 외부 접근은 Modal 프록시 인증으로 막습니다.
+- 동시 요청 시의 지연은 측정하지 않았습니다. AI 서버가 사진 요청을 동시에 2건까지만 처리합니다.
