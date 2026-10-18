@@ -318,3 +318,22 @@ def test_request_log_has_path_and_result_without_content(monkeypatch, caplog):
     assert lines[0].startswith("Photo request: provider=fallback outcome=ok status=None")
     assert "outcome=MODEL_UNAVAILABLE status=503 error=HTTPStatusError" in lines[1]
     assert scene().music_query not in caplog.text
+
+
+def test_stream_closed_before_analysis_is_logged_as_aborted(monkeypatch, caplog):
+    from fastapi import UploadFile
+
+    async def never_called(_image):
+        raise AssertionError("분석 전에 닫힌 스트림은 모델을 호출하면 안 된다.")
+
+    async def first_event_then_close():
+        upload = UploadFile(io.BytesIO(jpeg()), filename="x.jpg")
+        events, _ = await service.open_photo_stream(upload, str(uuid4()), str(uuid4()))
+        await events.__anext__()
+        await events.aclose()
+
+    monkeypatch.setattr(vlm, "analyze_image", never_called)
+    caplog.set_level("INFO", logger="uvicorn.error")
+    asyncio.run(first_event_then_close())
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:"))
+    assert "provider=None outcome=aborted" in line

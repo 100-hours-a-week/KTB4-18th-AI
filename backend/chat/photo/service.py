@@ -100,7 +100,8 @@ async def open_photo_stream(
         # NOTE: 분석 결과를 받기 전 실패만 새 실행으로 인정한다. 이후 실패는 과금·대화 상태 변경 가능성이 있어 새 ID를 요구한다.
         retryable = True
         started = time.monotonic()
-        provider, outcome, status, error_type = None, "ok", None, None
+        # NOTE: 연결이 끊겨 생성기가 닫히면 일반 예외 처리를 거치지 않으므로, 끝까지 응답한 경우에만 ok로 바꾼다.
+        provider, outcome, status, error_type = None, "aborted", None, None
         try:
             async with asyncio.timeout(45):
                 yield sse("status", {"stage": "analyzing"})
@@ -134,6 +135,7 @@ async def open_photo_stream(
                 if not tracks:
                     yield sse("text", {"delta": "\n\n조건에 맞는 곡을 찾지 못했어요."})
                 yield sse("tracks", {"tracks": tracks})
+                outcome = "ok"
                 yield sse("done", {"elapsed_ms": round((time.monotonic() - started) * 1000)})
         except Exception as error:
             status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
