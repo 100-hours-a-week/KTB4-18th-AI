@@ -15,6 +15,13 @@ def test_local_chat_page_uses_v1_fields() -> None:
     assert "store_url" in response.text
 
 
+def test_local_page_is_revalidated_on_every_load() -> None:
+    """콘솔 파일을 고친 뒤 브라우저가 예전 페이지를 재사용하지 않는지 확인한다."""
+    response = TestClient(main.app).get("/app/")
+
+    assert response.headers["cache-control"] == "no-cache"
+
+
 def test_cold_app_import_does_not_require_feature_keys_or_db():
     import os
     import subprocess

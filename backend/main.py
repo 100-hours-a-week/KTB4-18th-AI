@@ -8,7 +8,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.types import ExceptionHandler
+from starlette.responses import Response
+from starlette.types import ExceptionHandler, Scope
 
 from backend.chat.router import router as chat_router
 from backend.chat.photo.router import router as photo_router
@@ -32,7 +33,19 @@ app.add_exception_handler(HTTPException, cast(ExceptionHandler, http_error_handl
 
 # ===== 로컬 테스트 UI =====
 STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="app")
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    """콘솔을 고친 뒤에도 브라우저가 예전 페이지를 쓰지 않도록 매번 서버에 변경 여부를 묻게 한다."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        # NOTE: no-cache는 저장을 막지 않는다. 바뀌지 않았으면 304로 저장본을 그대로 쓴다.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/app", RevalidatedStaticFiles(directory=STATIC_DIR, html=True), name="app")
 
 
 @app.get("/", include_in_schema=False)
