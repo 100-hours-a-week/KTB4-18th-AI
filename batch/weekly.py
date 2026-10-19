@@ -1,5 +1,5 @@
 """
-주간 수집 배치 — KR 인기 차트 곡을 카탈로그에 추가하고 임베딩한다
+주간 수집 배치 — KR 인기 차트 곡을 카탈로그에 추가한다
 
 신곡 전체가 아니라 "사람들이 모를 수 없는" 곡을 노린다. Apple KR
 most-played 차트(신곡 + 스테디셀러)가 출처이고, 차트에서 처음 본
@@ -12,42 +12,31 @@ most-played 차트(신곡 + 스테디셀러)가 출처이고, 차트에서 처�
   4. 처음 본 아티스트 확장        (검색 관련도순 = 대표곡 근사, 커버 필터 적용)
      노래가 아닌 트랙(DJ 믹스, 짧은 인트로 등)은 차트 곡 포함 전부 거른다
   5. 메타데이터 INSERT           (emb_gemini = NULL)
-  6. emb_gemini IS NULL 임베딩   (실패해도 다음 실행에서 재시도)
 
-5와 6을 나눈 이유: 실패하는 단계는 임베딩이다. 둘을 묶으면 임베딩에
-실패한 곡은 DB에 남지 않고, 다음 주 차트에서 빠지면 다시 시도되지 않는다.
-검색은 emb_gemini IS NOT NULL만 보므로 벡터 없는 행은 추천에 섞이지 않는다.
-
-임베딩은 emb_test/openrouter_collect.py와 같은 입력·요청으로 만든다.
-(30초 · 모노 · 24kHz · 64kbps mp3 → OpenRouter, 원본 벡터 저장)
-입력 조건이 다르면 기존 벡터와 같은 공간이라는 보장이 없다.
+임베딩은 여기서 하지 않는다. emb_gemini IS NULL이 대기열이고, 일간 배치
+(batch/embed.py)가 처리한다. 둘을 묶으면 처리량이 "수집 1회당 N곡"에 묶여
+들어오는 곡이 많아질 때 대기열이 늘어나기만 한다.
 
 사용:
   python -m batch.weekly --dry-run       # 추가될 곡만 확인 (쓰기 없음)
-  python -m batch.weekly --limit 5       # 임베딩만 5곡. INSERT는 전부 한다
   python -m batch.weekly
 
-운영: AI EC2(고정 1대, ASG 미적용)의 crontab에서 주 1회 실행한다.
-서버 코드는 이 모듈을 import하지 않으므로 crontab 등록 전까지는 아무 일도 하지 않는다.
-  # 한국 시간 월요일 06시 = UTC 일요일 21시
-  0 21 * * 0  cd <compose 위치> && /usr/bin/flock -n /tmp/weekly.lock \\
+운영: AI EC2(고정 1대, ASG 미적용)의 crontab에서 주 1회 실행한다. 임베딩은
+batch/embed.py가 매일 따로 돈다. 서버 코드는 두 모듈을 import하지 않으므로
+crontab 등록 전까지는 아무 일도 하지 않는다.
+  # 한국 시간 일요일 06시 = UTC 토요일 21시
+  0 21 * * 6  cd <compose 위치> && /usr/bin/flock -n /tmp/weekly.lock \\
     /usr/bin/docker compose run --rm --no-deps -T <ai 서비스> \\
-    python -m batch.weekly >> /var/log/weekly.log 2>&1
+    python -m batch.weekly >> <로그 경로>/weekly.log 2>&1
   - flock -n: 이전 실행이 아직 돌고 있으면 건너뛴다 (인스턴스가 1대라 이걸로 충분)
   - -T: cron에는 TTY가 없다. 빠뜨리면 "the input device is not a TTY"로 실패한다
-  - 필요한 환경변수: DATABASE_URL, OPENROUTER_EMBEDDING_API_KEY (서버와 동일)
-등록 전 검증 순서: 서버에서 --dry-run 수동 실행 → --limit 1 → crontab을 5분 뒤로
-임시 등록해 로그 확인 → 주간 스케줄로 변경.
-첫 실행은 새 아티스트가 많아 약 200곡(임베딩 약 $1), 이후엔 차트 변동분만 들어온다.
+  - 필요한 환경변수: DATABASE_URL (서버와 동일)
+첫 실행은 새 아티스트가 많아 약 200곡, 이후엔 차트 변동분만 들어온다 (2주차 25곡).
 """
 import argparse
-import base64
 import json
-import os
 import re
-import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -55,34 +44,25 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-import numpy as np
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from db.models import GEMINI_EMB_DIM, SessionLocal, TrackRow  # noqa: E402
+from db.models import SessionLocal, TrackRow  # noqa: E402
 
 CHART_URL = ("https://rss.marketingtools.apple.com/api/v2/kr/music/"
              "most-played/100/songs.json")
 LOOKUP_URL = "https://itunes.apple.com/lookup"
 SEARCH_URL = "https://itunes.apple.com/search"
-EMBED_URL = "https://openrouter.ai/api/v1/embeddings"
-EMBED_MODEL = "google/gemini-embedding-2"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
 
 ITUNES_DELAY = 4.0    # 분당 15콜. 사용자 곡 검색과 같은 출구 IP를 나눠 쓴다
 ARTIST_TOP = 10       # 처음 본 아티스트당 가져올 대표곡 수
-EMBED_LIMIT = 200     # 한 번에 임베딩할 최대 곡 수. 곡당 약 $0.005
-MAX_FAIL = 3          # 이 횟수 이상 실패한 곡은 더 시도하지 않는다
-STOP_STREAK = 10      # 연속 실패 시 중단
-EMBED_SLEEP = 0.1
-AUDIO_SEC = 30
 
-# 이 배치가 넣은 곡만 임베딩한다. 기존 15,000곡의 대기분은 로컬
-# openrouter_collect.py가 처리 중이라, 겹치면 같은 곡에 두 번 과금된다.
+# 곡이 어디서 들어왔는지 남기는 이름표. 아티스트 확장 쪽에 이상한 곡이 섞이면
+# chart_artist만 골라 지우거나 되돌릴 수 있다.
 BUCKET_CHART = "chart_kr"
 BUCKET_ARTIST = "chart_artist"
-OWN_BUCKETS = (BUCKET_CHART, BUCKET_ARTIST)
 
 # 다른 버전 필터. emb_test/collect.py의 EXCLUDE_TITLE과 같은 목록이다.
 # 아티스트 확장 곡에만 적용한다. 차트 곡은 실제로 많이 듣는 곡이라 커버일
@@ -109,10 +89,6 @@ BRACKET_RE = re.compile(r"[(\[][^)\]]*\b(highlight|preview|teaser)\b[^)\]]*[)\]]
 #    (지민 'Rebirth (Intro)' 144s, BTS 'Outro: Tear' 284s, Slom 'SKIT (feat. LeeHi & Loco)' 151s)
 SHORT_RE = re.compile(r"\b(intro|interlude|outro|skit)\b", I)
 SHORT_MS = 90_000
-
-
-class Fatal(Exception):
-    """재시도해도 소용없는 오류. 즉시 중단한다."""
 
 
 # ── iTunes ──────────────────────────────────────────────
@@ -267,124 +243,24 @@ def collect_new(s) -> list[dict]:
     return rows
 
 
-# ── 6. 임베딩 ───────────────────────────────────────────
-
-def to_mp3_b64(url: str, exe: str) -> str:
-    """openrouter_collect.py와 동일한 변환. 입력이 다르면 벡터 공간이 어긋난다."""
-    with tempfile.TemporaryDirectory() as tmp:
-        m4a, mp3 = Path(tmp) / "a.m4a", Path(tmp) / "a.mp3"
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as r, open(m4a, "wb") as f:
-            f.write(r.read())
-        subprocess.run(
-            [exe, "-y", "-loglevel", "error", "-i", str(m4a),
-             "-t", str(AUDIO_SEC), "-ac", "1", "-ar", "24000",
-             "-b:a", "64k", str(mp3)], check=True)
-        return base64.b64encode(mp3.read_bytes()).decode()
-
-
-def embed_audio(url: str, exe: str, key: str) -> list[float]:
-    data_url = f"data:audio/mpeg;base64,{to_mp3_b64(url, exe)}"
-    body = json.dumps({
-        "model": EMBED_MODEL,
-        "input": [{"content": [{"type": "image_url", "image_url": {"url": data_url}}]}],
-        "encoding_format": "float",
-        # 지정하지 않으면 10% 비싼 Vertex eu로 라우팅된다 (2026-10 실측)
-        "provider": {"ignore": ["google-vertex/eu"]},
-    }).encode()
-    req = urllib.request.Request(
-        EMBED_URL, data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
-    for attempt in (1, 2, 3):
-        try:
-            with urllib.request.urlopen(req, timeout=120) as r:
-                d = json.loads(r.read().decode())
-            break
-        except urllib.error.HTTPError as e:
-            msg = e.read().decode()[:300]
-            if e.code in (401, 402, 403):
-                raise Fatal(f"HTTP {e.code}: {msg}") from None
-            if e.code in (429, 500, 502, 503) and attempt < 3:
-                time.sleep(15 * attempt)
-                continue
-            raise RuntimeError(f"HTTP {e.code}: {msg}") from None
-
-    v = np.asarray(d["data"][0]["embedding"], dtype=np.float32)
-    if v.shape[0] != GEMINI_EMB_DIM:
-        raise Fatal(f"차원이 {v.shape[0]}. 기존 벡터와 섞을 수 없다")
-    return v.tolist()
-
-
-def embed_pending(s, limit: int) -> None:
-    key = os.environ.get("OPENROUTER_EMBEDDING_API_KEY", "").strip()
-    if not key or key.startswith("<"):
-        print("OPENROUTER_EMBEDDING_API_KEY가 없어 임베딩을 건너뜁니다.")
-        return
-
-    targets = list(s.scalars(
-        select(TrackRow)
-        .where(TrackRow.emb_gemini.is_(None), TrackRow.fail_count < MAX_FAIL,
-               TrackRow.bucket.in_(OWN_BUCKETS), TrackRow.preview_url.isnot(None))
-        .order_by(TrackRow.track_id).limit(limit)))
-    print(f"\n임베딩 대상 {len(targets)}곡")
-    if not targets:
-        return
-
-    from imageio_ffmpeg import get_ffmpeg_exe
-    exe = get_ffmpeg_exe()
-    ok = fail = streak = 0
-
-    for t in targets:
-        try:
-            t.emb_gemini = embed_audio(t.preview_url, exe, key)
-            t.fail_reason = None
-            ok += 1
-            streak = 0
-        except Fatal as e:
-            s.commit()
-            print(f"  치명적 오류. 중단합니다: {e}")
-            break
-        except Exception as e:
-            t.fail_count = (t.fail_count or 0) + 1
-            t.fail_reason = f"{type(e).__name__}: {e}"[:300]
-            fail += 1
-            streak += 1
-            if streak >= STOP_STREAK:
-                s.commit()
-                print(f"  연속 {streak}회 실패. 중단합니다. 마지막 오류: {e}")
-                break
-        s.commit()    # 곡당 커밋. 도중에 죽어도 다음 실행이 이어서 한다
-        time.sleep(EMBED_SLEEP)
-
-    print(f"  성공 {ok} / 실패 {fail}")
-
-
 # ── 실행 ───────────────────────────────────────────────
 
-def run(limit: int = EMBED_LIMIT, dry_run: bool = False) -> None:
+def run(dry_run: bool = False) -> None:
     with SessionLocal() as s:
         rows = collect_new(s)
         print(f"\n추가할 곡 {len(rows)}곡")
         for r in rows[:20]:
             print(f"  [{r['bucket']}] {r['track_id']}  {r['artist']} - {r['title']}")
-        if dry_run:
+        if dry_run or not rows:
             return
 
-        if rows:
-            s.bulk_insert_mappings(TrackRow, rows)
-            s.commit()
-
-        embed_pending(s, limit)
-
-        total, done = s.execute(
-            select(func.count(), func.count(TrackRow.emb_gemini))
-            .where(TrackRow.bucket.in_(OWN_BUCKETS))).one()
-        print(f"\n주간 배치 곡 {total}곡 / 임베딩 완료 {done}곡")
+        s.bulk_insert_mappings(TrackRow, rows)
+        s.commit()
+        print("추가 완료. 임베딩은 batch.embed가 처리한다 (emb_gemini IS NULL 대기열)")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=EMBED_LIMIT, help="이번 실행 최대 임베딩 곡 수")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    run(limit=a.limit, dry_run=a.dry_run)
+    run(dry_run=a.dry_run)
