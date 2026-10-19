@@ -17,8 +17,18 @@ def scene():
                        recommendation_context="사진에 보이는 나무에서 차분한 분위기가 느껴져요. 잔잔한 음악 위주로 찾아볼게요.")
 
 
-@pytest.mark.parametrize("status,should_fallback", [(429, True), (503, True), (400, False), (401, False)])
-def test_fallback_only_for_transient_errors(monkeypatch, status, should_fallback):
+BUDGET = {"error": {"code": 403, "message": "Budget limit exceeded (weekly limit).",
+                    "metadata": {"limit_source": "openrouter_guardrail_budget"}}}
+
+
+@pytest.mark.parametrize("status,body,should_fallback", [
+    (429, None, True), (503, None, True), (400, None, False), (401, None, False),
+    (402, {"error": {"code": 402, "message": "Insufficient credits"}}, True),
+    (403, BUDGET, True),
+    (403, {"error": {"code": 403, "message": "Key limit exceeded"}}, True),
+    (403, {"error": {"code": 403, "message": "Forbidden"}}, False),
+])
+def test_fallback_only_for_transient_and_billing_errors(monkeypatch, caplog, status, body, should_fallback):
     for name in ("PHOTO_FALLBACK_URL", "PHOTO_FALLBACK_MODEL", "PHOTO_FALLBACK_API_KEY"):
         monkeypatch.setenv(name, "test")
     calls = []
@@ -26,14 +36,17 @@ def test_fallback_only_for_transient_errors(monkeypatch, status, should_fallback
     async def call(_image, *, fallback=False):
         calls.append(fallback)
         if not fallback:
-            response = httpx.Response(status, request=httpx.Request("POST", "https://test.invalid"))
+            response = httpx.Response(status, json=body, request=httpx.Request("POST", "https://test.invalid"))
             raise httpx.HTTPStatusError("failure", request=response.request, response=response)
         return scene()
 
     monkeypatch.setattr(vlm, "call_vlm", call)
+    caplog.set_level("INFO", logger="uvicorn.error")
     if should_fallback:
         assert asyncio.run(vlm.analyze_image(b"image"))[1] == "fallback"
         assert calls == [False, True]
+        reason = "unavailable" if status == 429 or status >= 500 else "billing"
+        assert f"Photo fallback: reason={reason} main_status={status}" in caplog.text
     else:
         with pytest.raises(httpx.HTTPStatusError):
             asyncio.run(vlm.analyze_image(b"image"))
@@ -85,6 +98,27 @@ def vlm_client(monkeypatch, response):
 def completion(content, finish_reason="stop", **message):
     return httpx.Response(200, json={"choices": [{"finish_reason": finish_reason,
                                                   "message": {"content": content, **message}}]})
+
+
+@pytest.mark.parametrize("photo_key,expected", [
+    ("photo-key", "Bearer photo-key"), (None, "Bearer test-key"), ("<YOUR_PHOTO_VLM_API_KEY>", "Bearer test-key"),
+])
+def test_photo_key_is_separate_from_chat_key(monkeypatch, photo_key, expected):
+    seen = []
+    monkeypatch.setenv("PHOTO_VLM_MODEL", "test/model")
+    monkeypatch.setenv("OPENROUTER_LLM_API_KEY", "test-key")
+    if photo_key is None:
+        monkeypatch.delenv("PHOTO_VLM_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("PHOTO_VLM_API_KEY", photo_key)
+
+    def handler(request):
+        seen.append(request.headers["Authorization"])
+        return completion(scene().model_dump_json())
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs))
+    asyncio.run(vlm.call_vlm(b"image"))
+    assert seen == [expected]
 
 
 @pytest.mark.parametrize("response,expected", [

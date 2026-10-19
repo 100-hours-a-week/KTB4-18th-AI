@@ -1,6 +1,7 @@
 """VLM 장면 분석 호출, 자체 VLM 폴백, 공급자 오류 분류."""
 
 import base64
+import logging
 import os
 
 import httpx
@@ -9,6 +10,12 @@ from pydantic import ValidationError
 from backend.chat.photo.schemas import Scene
 from backend.core.errors import _error
 from backend.providers.openrouter import OPENROUTER_BASE_URL
+
+logger = logging.getLogger("uvicorn.error")
+MAIN_TIMEOUT_S = 10
+# NOTE: 폴백 제한은 E4B · L40S 측정 최대(기동 직후 첫 요청 9.6초)에 약 25% 여유를 둔 값이다.
+# 서버가 꺼져 있으면 Modal이 즉시 503을 돌려주므로 기동을 기다리지 않고 실패한다.
+FALLBACK_TIMEOUT_S = 12
 
 
 class ProviderBlocked(Exception):
@@ -31,10 +38,36 @@ def _is_policy_block(body: object) -> bool:
     return bool(metadata.get("reasons")) or bool(markers & {"content_policy_violation", "refusal"})
 
 
+def _is_budget_limit(response: httpx.Response) -> bool:
+    """OpenRouter 403 중 키·워크스페이스·가드레일 예산 소진만 고른다."""
+    try:
+        error = response.json().get("error")
+    except (ValueError, AttributeError):
+        return False
+    if not isinstance(error, dict):
+        return False
+    metadata = error.get("metadata") if isinstance(error.get("metadata"), dict) else {}
+    # NOTE: 문서상 예산 오류는 metadata.limit_source를 주고, 메시지는 "... limit exceeded" 형태다.
+    return "limit_source" in metadata or "limit exceeded" in str(error.get("message", "")).lower()
+
+
+def _fallback_reason(response: httpx.Response) -> str | None:
+    """주 경로 오류 중 다른 공급자로 우회하면 해결되는 것만 사유를 돌려준다."""
+    status = response.status_code
+    if status == 429 or status >= 500:
+        return "unavailable"
+    if status == 402 or (status == 403 and _is_budget_limit(response)):
+        return "billing"
+    return None
+
+
 async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
     """OpenRouter 또는 OpenAI 호환 자체 VLM에 동일한 분석 계약을 전달한다."""
     url = os.getenv("PHOTO_FALLBACK_URL", "") if fallback else OPENROUTER_BASE_URL
-    key = os.getenv("PHOTO_FALLBACK_API_KEY", "") if fallback else os.getenv("OPENROUTER_LLM_API_KEY", "")
+    # NOTE: 사진 전용 키가 있으면 텍스트 채팅과 한도·비용을 분리한다. 없으면 기존 LLM 키를 쓴다.
+    photo_key = os.getenv("PHOTO_VLM_API_KEY", "").strip()
+    main_key = photo_key if photo_key and not photo_key.startswith("<") else os.getenv("OPENROUTER_LLM_API_KEY", "")
+    key = os.getenv("PHOTO_FALLBACK_API_KEY", "") if fallback else main_key
     model_var = "PHOTO_FALLBACK_MODEL" if fallback else "PHOTO_VLM_MODEL"
     model = os.getenv(model_var, "").strip()
     # NOTE: 비용이 발생하는 모델은 환경변수로 명시한 경우에만 호출한다.
@@ -76,7 +109,7 @@ async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
     }
     if not fallback:
         payload["provider"] = {"require_parameters": True}
-    async with httpx.AsyncClient(timeout=20 if fallback else 10) as client:
+    async with httpx.AsyncClient(timeout=FALLBACK_TIMEOUT_S if fallback else MAIN_TIMEOUT_S) as client:
         response = await client.post(url.rstrip("/") + "/chat/completions", json=payload,
                                      headers={"Authorization": "Bearer " + key})
     try:
@@ -100,7 +133,7 @@ async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
 
 
 async def analyze_image(image: bytes) -> tuple[Scene, str]:
-    """폴백 설정이 완비된 경우에만 429·5xx·통신 실패를 한 번 우회한다."""
+    """폴백 설정이 완비된 경우에만 일시 장애·결제 한도·통신 실패를 한 번 우회한다."""
     fallback_ready = all(
         (value := os.getenv(name, "").strip()) and not value.startswith("<")
         for name in ("PHOTO_FALLBACK_URL", "PHOTO_FALLBACK_MODEL", "PHOTO_FALLBACK_API_KEY")
@@ -108,9 +141,16 @@ async def analyze_image(image: bytes) -> tuple[Scene, str]:
     try:
         return await call_vlm(image), "openrouter"
     except httpx.HTTPStatusError as error:
-        if not fallback_ready or (error.response.status_code != 429 and error.response.status_code < 500):
+        reason = _fallback_reason(error.response)
+        if reason == "billing":
+            # NOTE: 결제·예산 한도는 저절로 풀리지 않는 운영 문제라 폴백 여부와 관계없이 경고로 남긴다.
+            logger.warning("Photo main path hit a billing limit: status=%s", error.response.status_code)
+        if not fallback_ready or reason is None:
             raise
+        main_status = error.response.status_code
     except httpx.TransportError:
         if not fallback_ready:
             raise
+        reason, main_status = "transport", None
+    logger.info("Photo fallback: reason=%s main_status=%s", reason, main_status)
     return await call_vlm(image, fallback=True), "fallback"
