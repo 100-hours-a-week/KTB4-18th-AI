@@ -8,14 +8,58 @@ from backend.chat.graph.state import RecommendationState
 from db.types import Track
 from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
+from backend.providers.jev import decide
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
 
 
 def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
-    """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 분류한다."""
+    """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 분류한다.
+    고속 모드 요청이면 fast_mode를 켜서 다음 턴부터 jev_node로 들어가게 한다."""
 
-    return classify(config["configurable"]["client"], state["messages"])
+    result = classify(config["configurable"]["client"], state["messages"])
+    if result["intent"] == "fast_mode":
+        result["fast_mode"] = True
+    return result
+
+
+# NOTE: Jev는 정해진 선택지 중 하나를 확률과 함께 고르는 결정 전용 모델이라 의도만
+# 고른다. 조회(lookup)는 제목·아티스트 추출이 필요해 Jev로 할 수 없으므로, 그 턴만
+# classify_node(LLM)로 넘겨 기존 lookup 경로를 탄다.
+JEV_QUESTIONS = {
+    "intent": {
+        "type": "choice",
+        "instructions": "음악 챗봇 사용자가 이번 메시지로 원하는 것",
+        "criteria": {
+            "recommend": "특정 아티스트 한 명으로 한정하지 않고 분위기·상황·장르·연도로 음악 추천을 원함",
+            "lookup": "특정 곡이나 아티스트의 정보를 찾거나, 특정 아티스트 한 명의 곡을 원함",
+            "guide": "챗봇 사용법이나 지원 범위를 물음",
+            "out_of_scope": "음악 추천·조회와 무관한 요청(인사, 잡담, 다른 주제, 의미 없는 입력)",
+        },
+    },
+}
+
+
+def jev_node(state: RecommendationState) -> dict:
+    """고속 모드에서 classify_node 대신 Jev로 의도를 판단한다.
+
+    NOTE: LLM이 대화 맥락을 합쳐 재구성해주던 recommend_query가 없어서 이번 턴
+    원문을 그대로 검색에 쓴다. 장르·연도 필터와 추천 조건 판정은 이전 classify 턴
+    값이 checkpointer에 남아 있으면 새어 들어가므로 기본값으로 덮어쓴다.
+    TODO: "좀 더 신나게" 같은 후속 요청은 원문만으론 맥락이 빠진다. 이전 쿼리와
+    이어 붙여 임베딩하는 방식을 eval로 확인할 것.
+    """
+
+    answers = decide(state["message"], JEV_QUESTIONS)
+    return {
+        "intent": answers["intent"]["choice"],
+        "recommend_has_enough_info": True,
+        "recommend_unsupported_condition": False,
+        "recommend_query": state["message"],
+        "recommend_genres": None,
+        "recommend_min_year": None,
+        "recommend_max_year": None,
+    }
 
 
 def embed_node(state: RecommendationState) -> dict:

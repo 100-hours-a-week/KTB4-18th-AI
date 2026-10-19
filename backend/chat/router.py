@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from backend.chat.schemas import ChatRequest
 from backend.chat.service import prepare_recommendation
-from backend.chat.streaming import sse, stream_answer, stream_lookup_answer
+from backend.chat.streaming import sse, stream_answer, stream_fast_answer, stream_lookup_answer
 from backend.http.schemas import ErrorResponse
 
 router = APIRouter()
@@ -41,6 +41,13 @@ def chat(body: ChatRequest) -> StreamingResponse:
 
         return StreamingResponse(
             static_answer(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    if result.kind == "fast":
+        return StreamingResponse(
+            stream_fast_answer(result.text, result.tracks),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

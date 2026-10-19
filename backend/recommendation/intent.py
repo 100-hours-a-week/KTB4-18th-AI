@@ -77,7 +77,10 @@ def classify_instructions(genres: list[str]) -> str:
         "레시피 알려주고 뉴진스 노래 추천해줘\" → lookup). 음악 외 요청의 결과를 "
         "가리키는 말(예: \"오늘 뭐 먹을지 골라주고 그 음식에 어울리는 노래\"의 \"그 "
         "음식\")은 이전 대화를 참조하는 게 아니므로 clarify로 보내지 말고, 정해진 "
-        "부분만으로 판단하세요.\n\n"
+        "부분만으로 판단하세요.\n"
+        "- fast_mode: 고속 모드·빠른 모드로 바꿔 달라는 요청(예: \"고속 모드 켜줘\", "
+        "\"빠른 모드로 해줘\", \"설명 없이 곡만 빨리 줘\"). 이번 메시지가 모드 전환 "
+        "자체를 요청할 때만 해당합니다.\n\n"
         "conversation 필드는 이 대화방의 메시지를 오래된 순서로 담고 있고, "
         "마지막 항목이 이번에 분류할 요청입니다. 앞의 메시지들은 '이 곡과 "
         "비슷한 노래' 같은 지시어를 이해하기 위한 맥락으로만 참고하세요.\n\n"
@@ -197,6 +200,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                                     "clarify",
                                     "lookup",
                                     "out_of_scope",
+                                    "fast_mode",
                                 ],
                             },
                             "recommend_has_enough_info": {"type": "boolean"},
@@ -241,7 +245,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
         raise _model_unavailable() from error
 
     if not isinstance(data, dict) or data.get("intent") not in (
-        "recommend", "guide", "clarify", "lookup", "out_of_scope"
+        "recommend", "guide", "clarify", "lookup", "out_of_scope", "fast_mode"
     ):
         raise _model_unavailable()
 
