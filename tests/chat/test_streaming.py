@@ -22,7 +22,7 @@ def test_failed_streams_emit_error_without_done(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "test-model")
     client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_kwargs: FakeStream()))
     track = Track(track_id="1", title="song", artist="artist", artwork_url=None,
-                  preview_url=None, reason="reason")
+                  preview_url=None)
     for stream in (stream_answer(client, "request", [track], None),
                    stream_lookup_answer(client, "request", [track], None)):
         events = list(stream)
