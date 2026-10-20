@@ -32,14 +32,17 @@ def route_entry(state: RecommendationState) -> str:
 
 
 def route_by_jev(state: RecommendationState) -> str:
-    """추천은 바로 임베딩으로, 조회는 제목·아티스트 추출을 위해 classify로 보낸다.
-    guide/out_of_scope는 고정 안내라 그래프를 끝낸다."""
+    """추천은 바로 임베딩으로 보낸다. 조회는 jev_node가 곡을 찾았으면 끝내고, 못 찾았으면
+    제목·아티스트 추출을 위해 classify로 보낸다. guide/out_of_scope는 고정 안내라 끝낸다.
+    Jev가 실패했으면 classify로 보낸다."""
 
+    if state["jev_failed"]:
+        return "classify"
     intent = state["intent"]
     if intent == "recommend":
         return "embed"
     if intent == "lookup":
-        return "classify"
+        return END if state["lookup_status"] == "found" else "classify"
     return END
 
 

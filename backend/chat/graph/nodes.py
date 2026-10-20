@@ -8,7 +8,8 @@ from backend.chat.graph.state import RecommendationState
 from db.types import Track
 from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
-from backend.providers.jev import decide
+from backend.providers.jev import JevUnavailable, decide
+from backend.recommendation.fast import find_lookup_rows, jev_state, resolve_intent, step1_questions
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
 
@@ -23,36 +24,33 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     return result
 
 
-# NOTE: Jev는 정해진 선택지 중 하나를 확률과 함께 고르는 결정 전용 모델이라 의도만
-# 고른다. 조회(lookup)는 제목·아티스트 추출이 필요해 Jev로 할 수 없으므로, 그 턴만
-# classify_node(LLM)로 넘겨 기존 lookup 경로를 탄다.
-JEV_QUESTIONS = {
-    "intent": {
-        "type": "choice",
-        "instructions": "음악 챗봇 사용자가 이번 메시지로 원하는 것",
-        "criteria": {
-            "recommend": "특정 아티스트 한 명으로 한정하지 않고 분위기·상황·장르·연도로 음악 추천을 원함",
-            "lookup": "특정 곡이나 아티스트의 정보를 찾거나, 특정 아티스트 한 명의 곡을 원함",
-            "guide": "챗봇 사용법이나 지원 범위를 물음",
-            "out_of_scope": "음악 추천·조회와 무관한 요청(인사, 잡담, 다른 주제, 의미 없는 입력)",
-        },
-    },
-}
-
-
 def jev_node(state: RecommendationState) -> dict:
-    """고속 모드에서 classify_node 대신 Jev로 의도를 판단한다.
+    """고속 모드에서 classify_node 대신 Jev로 의도를 판단하고, 조회면 LLM 없이 곡을 찾는다.
+
+    조회 곡을 못 찾으면(lookup_status=None) route_by_jev가 그 턴만 classify로 보낸다.
 
     NOTE: LLM이 대화 맥락을 합쳐 재구성해주던 recommend_query가 없어서 이번 턴
-    원문을 그대로 검색에 쓴다. 장르·연도 필터와 추천 조건 판정은 이전 classify 턴
-    값이 checkpointer에 남아 있으면 새어 들어가므로 기본값으로 덮어쓴다.
+    원문을 그대로 검색에 쓴다. 장르·연도 필터, 추천 조건 판정, 조회 상태는 이전 턴
+    값이 checkpointer에 남아 있으면 새어 들어가므로 매번 덮어쓴다.
     TODO: "좀 더 신나게" 같은 후속 요청은 원문만으론 맥락이 빠진다. 이전 쿼리와
     이어 붙여 임베딩하는 방식을 eval로 확인할 것.
     """
 
-    answers = decide(state["message"], JEV_QUESTIONS)
-    return {
-        "intent": answers["intent"]["choice"],
+    messages = state["messages"]
+    shown_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
+
+    # NOTE: Jev가 실패해도 사용자에게 오류를 보이지 않고, 그 턴만 classify(LLM)로 처리한다.
+    try:
+        answers = decide(jev_state(messages), step1_questions())
+        intent = resolve_intent(answers)
+        rows = find_lookup_rows(messages, answers, shown_ids) if intent == "lookup" else None
+    except JevUnavailable:
+        return {"jev_failed": True}
+
+    result = {
+        "jev_failed": False,
+        "intent": intent,
+        "lookup_status": None,
         "recommend_has_enough_info": True,
         "recommend_unsupported_condition": False,
         "recommend_query": state["message"],
@@ -60,6 +58,11 @@ def jev_node(state: RecommendationState) -> dict:
         "recommend_min_year": None,
         "recommend_max_year": None,
     }
+    if rows:
+        tracks = to_tracks(rows)
+        result |= {"lookup_status": "found", "lookup_tracks": tracks,
+                   "shown_track_ids": [t.track_id for t in tracks]}
+    return result
 
 
 def embed_node(state: RecommendationState) -> dict:
@@ -85,6 +88,22 @@ def search_node(state: RecommendationState) -> dict:
         max_year=state.get("recommend_max_year"),
     )
     return {"tracks": tracks, "shown_track_ids": [t.track_id for t in tracks]}
+
+
+def to_tracks(rows: list) -> list[Track]:
+    """DB 조회 결과(TrackRow)를 응답용 Track 카드로 바꾼다(최대 5곡)."""
+
+    return [
+        Track(
+            track_id=str(row.track_id),
+            title=row.title,
+            artist=row.artist,
+            artwork_url=row.artwork_url,
+            preview_url=row.preview_url,
+            store_url=row.store_url,
+        )
+        for row in rows[:5]
+    ]
 
 
 def lookup_node(state: RecommendationState) -> dict:
@@ -123,17 +142,7 @@ def lookup_node(state: RecommendationState) -> dict:
     if not rows:
         return {"lookup_status": "not_found"}
 
-    tracks = [
-        Track(
-            track_id=str(row.track_id),
-            title=row.title,
-            artist=row.artist,
-            artwork_url=row.artwork_url,
-            preview_url=row.preview_url,
-            store_url=row.store_url,
-        )
-        for row in rows[:5]
-    ]
+    tracks = to_tracks(rows)
     return {
         "lookup_status": "found",
         "lookup_tracks": tracks,

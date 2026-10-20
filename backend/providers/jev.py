@@ -8,13 +8,15 @@ import os
 
 import httpx
 
-from backend.core.errors import _model_unavailable
-
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 
 # NOTE: 요청마다 TLS 연결을 새로 맺지 않도록 프로세스 동안 클라이언트 하나를 재사용한다.
 # 고속 모드용이라 timeout을 짧게 두고, 재시도는 하지 않는다.
 _client = httpx.Client(timeout=5.0)
+
+
+class JevUnavailable(Exception):
+    """Jev를 쓸 수 없음(설정 없음, 호출 실패, 응답 형식 이상). 호출 측은 classify로 폴백한다."""
 
 
 def decide(state: str | list, questions: dict) -> dict:
@@ -23,8 +25,9 @@ def decide(state: str | list, questions: dict) -> dict:
     api_key = os.getenv("OPENROUTER_LLM_API_KEY", "").strip()
     model = os.getenv("JEV_MODEL", "").strip()
     if not api_key or api_key.startswith("<") or not model:
-        raise _model_unavailable()
+        raise JevUnavailable("OPENROUTER_LLM_API_KEY 또는 JEV_MODEL이 없음")
 
+    # NOTE: alpha 엔드포인트라 응답 형식이 바뀔 수 있어서 JSON 파싱 실패도 장애로 본다.
     try:
         response = _client.post(
             DECISIONS_URL,
@@ -32,7 +35,6 @@ def decide(state: str | list, questions: dict) -> dict:
             json={"model": model, "state": state, "questions": questions},
         )
         response.raise_for_status()
-    except httpx.HTTPError as error:
-        raise _model_unavailable() from error
-
-    return response.json()["answers"]
+        return response.json()["answers"]
+    except (httpx.HTTPError, ValueError, KeyError) as error:
+        raise JevUnavailable(str(error)) from error
