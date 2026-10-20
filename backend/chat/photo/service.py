@@ -20,7 +20,8 @@ from backend.chat.photo.schemas import Scene
 from backend.chat.streaming import sse
 from backend.core.errors import _error
 
-logger = logging.getLogger(__name__)
+# NOTE: uvicorn 로거를 써야 별도 설정 없이 INFO 줄이 컨테이너 로그에 남는다(STT와 같은 방식).
+logger = logging.getLogger("uvicorn.error")
 # TODO: 처리 슬롯·중복 기록·채팅별 진행 여부는 프로세스 단위다. 다중 워커 배포 전 BE·공유 저장소로 옮긴다.
 # NOTE: 슬롯은 이미지 디코딩 전에 잡고, 시간 초과 뒤 계속되는 검색 작업이 끝날 때 반환한다. 대기열은 두지 않는다.
 MAX_CONCURRENT = 2
@@ -99,13 +100,15 @@ async def open_photo_stream(
         # NOTE: 분석 결과를 받기 전 실패만 새 실행으로 인정한다. 이후 실패는 과금·대화 상태 변경 가능성이 있어 새 ID를 요구한다.
         retryable = True
         started = time.monotonic()
+        # NOTE: 연결이 끊겨 생성기가 닫히면 일반 예외 처리를 거치지 않으므로, 끝까지 응답한 경우에만 ok로 바꾼다.
+        provider, outcome, status, error_type = None, "aborted", None, None
         try:
             async with asyncio.timeout(45):
                 yield sse("status", {"stage": "analyzing"})
                 try:
                     scene, provider = await vlm.analyze_image(normalized)
                 except vlm.ProviderBlocked:
-                    retryable = False
+                    retryable, outcome = False, "provider_blocked"
                     yield sse("verdict", {"usable": False, "reject_reason": "provider_blocked"})
                     yield sse("rejected", {"reason": "provider_blocked", "message": REJECT_MESSAGES["provider_blocked"]})
                     yield sse("done", {})
@@ -116,6 +119,7 @@ async def open_photo_stream(
                 # NOTE: 거절도 분석 결과를 표시해 모델 판정과 API 실패를 구분할 수 있게 한다.
                 yield sse("scene", {"scene": scene.model_dump(), "provider": provider})
                 if not scene.usable:
+                    outcome = "rejected"
                     yield sse("rejected", {"reason": scene.reject_reason, "message": REJECT_MESSAGES[scene.reject_reason]})
                     yield sse("done", {})
                     return
@@ -131,6 +135,7 @@ async def open_photo_stream(
                 if not tracks:
                     yield sse("text", {"delta": "\n\n조건에 맞는 곡을 찾지 못했어요."})
                 yield sse("tracks", {"tracks": tracks})
+                outcome = "ok"
                 yield sse("done", {"elapsed_ms": round((time.monotonic() - started) * 1000)})
         except Exception as error:
             status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
@@ -150,11 +155,15 @@ async def open_photo_stream(
                 reason = error.detail.get("details", {}).get("reason", reason)
                 if reason in ("PHOTO_MODEL_NOT_CONFIGURED", "PHOTO_PROVIDER_NOT_CONFIGURED"):
                     message = error.detail["message"]
-            # NOTE: 공급자 응답 본문·헤더에는 민감한 정보가 있을 수 있어 오류 유형·상태 코드만 기록한다.
-            logger.warning("Photo recommendation failed: %s status=%s reason=%s", type(error).__name__, status, reason)
+            outcome, error_type = reason, type(error).__name__
             yield sse("error", {"detail": message, "reason": reason})
         finally:
             if worker is None:
                 release(allow_retry=retryable)
+            # NOTE: 사진·분석 내용과 공급자 응답 본문은 남기지 않고 경로·결과·상태 코드·소요 시간만 기록한다.
+            # 폴백을 쓴 요청은 vlm.analyze_image가 사유를 한 줄 더 남긴다.
+            log = logger.info if error_type is None else logger.warning
+            log("Photo request: provider=%s outcome=%s status=%s error=%s elapsed_ms=%d",
+                provider, outcome, status, error_type, round((time.monotonic() - started) * 1000))
 
     return events(), release_if_never_started

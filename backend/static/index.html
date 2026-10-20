@@ -102,6 +102,10 @@
     .statusbadge { padding: 3px 10px; color: #6b6d74; background: #f0f0f2; border-radius: 8px; font-size: 12px; font-weight: 600; }
     .statusbadge.ok { color: #12805c; background: #e6f4ee; }
     .statusbadge.err { color: #c0362c; background: #fbebea; }
+    .pathtag { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .pathtag.main { color: var(--accent); background: #edf0fb; }
+    .pathtag.fallback { color: #8a5300; background: #fdf0d8; }
+    .pathtag.fail { color: #c0362c; background: #fbebea; }
     .lat { color: #9a9ca3; font-size: 11.5px; }
     .kv { display: flex; justify-content: space-between; padding: 7px 0; border-top: 1px solid #f2f2f4; }
     .kv .k { color: #8a8d94; font-size: 12px; }
@@ -194,7 +198,7 @@
       <aside class="inspane">
         <div class="insphead"><div class="t">인스펙터</div><div class="s">마지막 <b class="mono" id="lastEndpoint">POST /v1/chat/messages</b> 요청·응답</div></div>
         <div class="inspbody">
-          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono" id="endpointName">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> <span id="endpointPath">/v1/chat/messages</span></span></div><div class="kv"><span class="k">응답 방식</span><span class="v" id="responseType">text/event-stream</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
+          <section class="card"><div class="conn-top"><div class="conn-name"><span class="dot" id="connDot2"></span><span class="mono" id="endpointName">/v1/chat/messages</span></div><div class="statusgroup"><span class="statusbadge" id="statusBadge">대기 중</span><span class="lat mono" id="latText">—</span></div></div><div class="kv"><span class="k">엔드포인트</span><span class="v mono"><span class="method">POST</span> <span id="endpointPath">/v1/chat/messages</span></span></div><div class="kv"><span class="k">응답 방식</span><span class="v" id="responseType">text/event-stream</span></div><div class="kv"><span class="k">사진 분석 경로</span><span class="v" id="photoPath">—</span></div><div class="kv"><span class="k">구간 시간</span><span class="v mono" id="photoStages">—</span></div><div class="kv"><span class="k">누적 호출</span><span class="v mono" id="callCount">0회</span></div></section>
           <div class="blocktitle"><span class="bt">요청 본문 (Request)</span></div><pre class="jsonpre" id="reqBox"><span class="placeholder">아직 보낸 요청이 없습니다.</span></pre>
           <div class="blocktitle"><span class="bt">응답 과정 · 수신 순서</span></div><div id="responseSteps"><div class="empty">아직 수신한 이벤트가 없습니다.</div></div>
           <div class="blocktitle"><span class="bt">최종 응답 (Response)</span><span class="mono" id="respMini" style="font-size:11px;color:#9a9ca3"></span></div><pre class="jsonpre" id="resBox"><span class="placeholder">메시지를 보내면 여기에 표시됩니다.</span></pre>
@@ -209,6 +213,8 @@
     const CHAT_URL = "/v1/chat/messages";
     const STT_URL = "/v1/transcriptions";
     const PHOTO_URL = "/v1/chat/images";
+    // NOTE: scene 이벤트의 provider로 사진 분석을 주 경로와 폴백 중 어디서 처리했는지 표시한다.
+    const PHOTO_PATHS = { openrouter: ["main", "주 경로 · OpenRouter"], fallback: ["fallback", "폴백 · 자체 VLM(Modal)"] };
     // NOTE: 같은 Wi-Fi의 HTTP 테스트 주소에서도 안전한 난수로 UUID를 만든다.
     function newRequestId() {
       if (crypto.randomUUID) return crypto.randomUUID();
@@ -243,6 +249,8 @@
     function setStatus(kind, code, text, latency) { const badge = $("statusBadge"); if (kind === "idle") { badge.className = "statusbadge"; badge.textContent = "대기 중"; $("latText").textContent = "—"; $("respMini").textContent = ""; return; } badge.className = kind === "ok" ? "statusbadge ok" : "statusbadge err"; badge.textContent = `${code} ${text}`; $("latText").textContent = latency == null ? "—" : `${latency}ms`; $("respMini").textContent = code; }
     function setReqBox(value) { $("reqBox").innerHTML = jsonHtml(value); }
     function setResBox(value, error) { const box = $("resBox"); box.className = error ? "jsonpre err" : "jsonpre"; box.innerHTML = jsonHtml(value); }
+    function setPhotoPath(kind, label) { $("photoPath").innerHTML = kind ? `<span class="pathtag ${kind}">${esc(label)}</span>` : "—"; }
+    function seconds(ms) { return `${(ms / 1000).toFixed(1)}초`; }
     function appendResponseStep(event, data) {
       const box = $("responseSteps");
       // NOTE: 연속된 텍스트 조각만 합친다. 장면 분석·상태·오류는 수신 순서대로 보존한다.
@@ -260,7 +268,7 @@
       item.append(heading, pre); box.append(item);
       lastResponseStep = { event, data: { ...data }, pre };
     }
-    function pushLog(status, path = CHAT_URL) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, path, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">${esc(item.path)}</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
+    function pushLog(status, path = CHAT_URL, tag = null) { state.callCount += 1; $("callCount").textContent = `${state.callCount}회`; state.callLog.unshift({ status, path, tag, time: nowLabel() }); state.callLog = state.callLog.slice(0, 6); $("logBody").innerHTML = state.callLog.map((item) => `<div class="logrow"><span class="lm mono">POST</span><span class="lp mono">${esc(item.path)}${item.tag ? ` <span class="pathtag ${item.tag[0]}">${esc(item.tag[1])}</span>` : ""}</span><span class="lst ${item.status === 200 ? "ok" : "err"} mono">${item.status}</span><span class="lt mono">${item.time}</span></div>`).join(""); }
     function renderChips() { let html = ""; if (state.recording) html += '<span class="ctxchip rec"><span class="blink"></span>녹음 중 · 최대 60초 · 종료하면 전사 요청<span class="x" data-act="stopRec">×</span></span>'; else if (state.source === "voice") html += '<span class="ctxchip voice">전사문을 확인·수정한 뒤 전송하세요<span class="x" data-act="cancelVoice">×</span></span>'; if (state.photoAttached) html += '<span class="ctxchip photo">사진으로 추천받기 · 아래 방식 확인 <button type="button" class="x" data-act="removePhoto" aria-label="사진 제거">×</button></span>'; $("chips").innerHTML = html; }
     function refreshControls() {
       for (const id of ["sendBtn", "input", "photoBtn", "resetBtn"]) $(id).disabled = state.busy || state.recording;
@@ -288,6 +296,7 @@
       $("endpointName").textContent = path;
       $("endpointPath").textContent = path;
       $("responseType").textContent = path === STT_URL ? "application/json" : "text/event-stream";
+      setPhotoPath(null); $("photoStages").textContent = "—";
     }
     async function send() {
       if (state.busy || state.recording) return;
@@ -360,6 +369,9 @@
       let scene = null;
       let rejected = false;
       let accepted = false;
+      let sceneMs = null;
+      let tracksMs = null;
+      let pathTag = null;
 
       function consume(block) {
         if (controller?.signal.aborted) return;
@@ -373,7 +385,11 @@
         const data = JSON.parse(dataText);
         appendResponseStep(eventName, data);
         if (eventName === "status") { setConnection("", data.stage === "analyzing" ? "사진 확인 중" : "음악 검색 중"); }
-        if (eventName === "scene") { scene = data; }
+        if (eventName === "scene") {
+          scene = data; sceneMs = Math.round(performance.now() - started);
+          const [kind, label] = PHOTO_PATHS[data.provider] || ["main", String(data.provider)];
+          setPhotoPath(kind, label); pathTag = [kind, kind === "fallback" ? "폴백" : "주 경로"];
+        }
         // NOTE: 판정 전에는 채팅을 바꾸지 않고, 적합 판정에서만 기존 대화에 사진을 합류시킨다.
         if (eventName === "verdict" && isPhoto) {
           if (data.usable && !accepted) {
@@ -388,8 +404,12 @@
         if (eventName === "rejected") { rejected = true; if (isPhoto && !$("photoScreen").hidden) openPhotoSheet(); answerBox.textContent = data.message; setConnection("err", "재촬영 안내"); }
         if (eventName === "done") completed = true;
         if (eventName === "text") { answer += data.delta || ""; answerBox.textContent = answer; scrollToBottom(); }
-        if (eventName === "tracks") { tracks = data.tracks || []; addTrackCards(trackList, tracks); }
-        if (eventName === "error") streamError = data.detail || "응답 스트리밍에 실패했습니다.";
+        if (eventName === "tracks") { tracksMs = Math.round(performance.now() - started); tracks = data.tracks || []; addTrackCards(trackList, tracks); }
+        if (eventName === "error") {
+          streamError = data.detail || "응답 스트리밍에 실패했습니다.";
+          // NOTE: 분석 결과 전에 실패하면 주 경로·폴백 중 어디서 실패했는지 화면에서는 알 수 없어 서버 사유만 표시한다.
+          if (isPhoto && sceneMs == null) { setPhotoPath("fail", `분석 실패 · ${data.reason || "오류"}`); pathTag = ["fail", "분석 실패"]; }
+        }
       }
 
       try {
@@ -408,13 +428,14 @@
 
       if (controller?.signal.aborted) return;
       const latency = Math.round(performance.now() - started);
+      if (isPhoto) $("photoStages").textContent = [sceneMs != null && `장면 분석까지 ${seconds(sceneMs)}`, sceneMs != null && tracksMs != null && `곡 검색 ${seconds(tracksMs - sceneMs)}`, `총 ${seconds(latency)}`].filter(Boolean).join(" · ");
       if (isPhoto && completed && !accepted && !rejected && !streamError) streamError = "사진 판정 이벤트가 없습니다. 서버를 재시작해 주세요.";
       if (isPhoto) $("photoNotice").textContent = "";
       if (!completed && !streamError) streamError = "완료 이벤트 전에 연결이 종료됐습니다.";
       if (streamError) { if (isPhoto && !accepted) $("photoNotice").textContent = "사진을 확인하지 못했어요. 다시 시도해 주세요."; else answerBox.textContent = answer + "\n응답을 완료하지 못했어요. 다시 요청해 주세요."; setConnection("err", "스트림 실패"); setStatus("err", "ERR", "Stream", latency); setResBox({ error: streamError, answer, tracks }, true); }
       else { setConnection(rejected ? "err" : "ok", rejected ? "재촬영 안내" : "연결됨"); setStatus("ok", response.status, rejected ? "재촬영" : "OK", latency); setResBox({ message: rejected ? answerBox.textContent : answer, tracks, ...(scene ? { analysis: scene } : {}) }, false); }
       if (path === PHOTO_URL && completed && !rejected && !streamError) removePhoto();
-      pushLog(response.status, path);
+      pushLog(response.status, path, pathTag);
     }
 
     let playingAudio = null;

@@ -297,3 +297,43 @@ def test_provider_block_is_a_neutral_rejection_not_an_error(monkeypatch):
         assert '"reason": "MODEL_RESPONSE_INVALID"' in broken.text
         assert "event: rejected" not in broken.text
     assert_slots_released()
+
+
+def test_request_log_has_path_and_result_without_content(monkeypatch, caplog):
+    async def fallback_scene(_image):
+        return scene(), "fallback"
+
+    async def cold_fallback(_image):
+        response = httpx.Response(503, request=httpx.Request("POST", "https://test.invalid"))
+        raise httpx.HTTPStatusError("cold", request=response.request, response=response)
+
+    monkeypatch.setattr(service, "recommend_scene", lambda *_args: [])
+    caplog.set_level("INFO", logger="uvicorn.error")
+    with TestClient(app) as client:
+        for analyze in (fallback_scene, cold_fallback):
+            monkeypatch.setattr(vlm, "analyze_image", analyze)
+            client.post("/v1/chat/images", data={"thread_id": str(uuid4()), "request_id": str(uuid4())},
+                        files={"image": ("x.jpg", jpeg(), "image/jpeg")})
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:")]
+    assert lines[0].startswith("Photo request: provider=fallback outcome=ok status=None")
+    assert "outcome=MODEL_UNAVAILABLE status=503 error=HTTPStatusError" in lines[1]
+    assert scene().music_query not in caplog.text
+
+
+def test_stream_closed_before_analysis_is_logged_as_aborted(monkeypatch, caplog):
+    from fastapi import UploadFile
+
+    async def never_called(_image):
+        raise AssertionError("분석 전에 닫힌 스트림은 모델을 호출하면 안 된다.")
+
+    async def first_event_then_close():
+        upload = UploadFile(io.BytesIO(jpeg()), filename="x.jpg")
+        events, _ = await service.open_photo_stream(upload, str(uuid4()), str(uuid4()))
+        await events.__anext__()
+        await events.aclose()
+
+    monkeypatch.setattr(vlm, "analyze_image", never_called)
+    caplog.set_level("INFO", logger="uvicorn.error")
+    asyncio.run(first_event_then_close())
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:"))
+    assert "provider=None outcome=aborted" in line
