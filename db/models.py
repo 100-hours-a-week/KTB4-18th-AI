@@ -21,7 +21,7 @@ GEMINI_MODEL_VERSION = "gemini-embedding-2"
 # NOTE: v4 검색 공간 = [s_mix (3072), −β·r(s) (1)]. backend/recommendation/adapter.py 참고
 V4_EMB_DIM = GEMINI_EMB_DIM + 1
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC, Vector
 VectorType = Vector(EMB_DIM)
 
 class Base(DeclarativeBase):
@@ -67,6 +67,19 @@ class TrackRow(Base):
     # NOTE: 임베딩 실패 이력. 반복 실패하는 곡을 거를 수 있음
     fail_count: Mapped[int] = mapped_column(default=0)
     fail_reason: Mapped[str] = mapped_column(Text, nullable=True)
+
+class V4RefQuery(Base):
+    """v4 허브 점수 r(s)의 기준 = 학습에 쓴 train 검색어 17,802개 (v4 검색어 공간으로 바꾼 벡터).
+
+    크론잡(batch/embed.py)이 새 곡의 emb_v4를 계산할 때 전부 읽는다. 서버 검색은 읽지 않는다.
+    NOTE: 110MB라 git 대신 DB에 둔다. halfvec(fp16)이어도 추천 순위는 float32와 같다 (2026-10-20 확인)
+    """
+
+    __tablename__ = "v4_ref_queries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emb = mapped_column(HALFVEC(GEMINI_EMB_DIM), nullable=False)
+
 
 class CorpusStat(Base):
     """임베딩 벡터값을 평균을 뺀 수치로 하면 결과 다양성 증가. 같은 PostgreSQL에 저장"""

@@ -14,8 +14,11 @@
 (30초 · 모노 · 24kHz · 64kbps mp3 → OpenRouter, 원본 벡터 저장)
 입력 조건이 다르면 기존 벡터와 같은 공간이라는 보장이 없다.
 
+임베딩 뒤에는 2단계로 emb_v4(v4 검색 공간)도 채운다 (batch/fill_v4.py, API 호출 없음).
+필요한 것: tracks.emb_v4 칸, v4_ref_queries 테이블, backend/recommendation/assets/song_adapter_v4.npz.
+
 사용:
-  python -m batch.embed --dry-run     # 대상과 남은 대기만 확인 (API 호출 없음)
+  python -m batch.embed --dry-run     # 대상과 남은 대기(임베딩·v4)만 확인 (API 호출 없음)
   python -m batch.embed --limit 1
   python -m batch.embed               # 기본 200곡
 
@@ -47,6 +50,7 @@ from sqlalchemy import func, select
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from batch.fill_v4 import count_missing, fill_missing  # noqa: E402
 from db.models import GEMINI_EMB_DIM, SessionLocal, TrackRow  # noqa: E402
 
 EMBED_URL = "https://openrouter.ai/api/v1/embeddings"
@@ -143,6 +147,22 @@ def run(limit: int = EMBED_LIMIT, dry_run: bool = False) -> None:
     key = os.environ.get("OPENROUTER_EMBEDDING_API_KEY", "").strip()
     if not key or key.startswith("<"):
         sys.exit("OPENROUTER_EMBEDDING_API_KEY가 없습니다.")
+
+    embed_new(key, limit, dry_run)
+
+    # NOTE: 2단계 — emb_gemini는 있는데 emb_v4가 없는 곡(이번에 임베딩한 곡 + 예전에 v4만 못 채운 곡)을
+    # 채운다. API 호출 없음. SEARCH_EMBEDDING과 상관없이 늘 채워서 스위치를 언제 바꿔도 빠진 곡이 없다.
+    # 실패하면 예외로 끝나 종료 코드가 0이 아니고, 1단계에서 커밋한 emb_gemini는 그대로라 다음 실행이 이어서 채운다.
+    with SessionLocal() as s:
+        print(f"v4 대기 {count_missing(s)}곡")
+    if dry_run:
+        return
+    filled = fill_missing()
+    print(f"v4 채움 {filled}곡")
+
+
+def embed_new(key: str, limit: int, dry_run: bool) -> None:
+    """1단계: emb_gemini가 비어 있는 곡을 임베딩한다 (API 호출, 곡당 커밋)."""
 
     with SessionLocal() as s:
         backlog = s.scalar(select(func.count()).select_from(pending().subquery()))
