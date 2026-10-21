@@ -138,3 +138,56 @@ def test_lookup_spreads_results_across_albums(monkeypatch):
 
     picked = lookup(Session(), artist="IU", limit=3)
     assert [r.track_id for r in picked] == [1, 4, 5]
+
+
+class _RecordingSession:
+    """search()가 실행한 SQL을 모으고, 지정한 (행, 거리) 목록을 돌려준다."""
+
+    def __init__(self, rows=()):
+        self.statements, self.rows = [], list(rows)
+
+    def execute(self, stmt):
+        self.statements.append(stmt)
+        return SimpleNamespace(all=lambda: self.rows)
+
+
+def test_search_gemini_space_keeps_cosine_on_emb_gemini(monkeypatch):
+    """기본(gemini)은 기존과 같은 emb_gemini 코사인 검색이고, deferred인 emb_v4는 SELECT에 없다."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+    from db.search import search
+
+    session = _RecordingSession()
+    search(session, [1.0] * 3072)
+    sql = str(session.statements[0])
+    assert "emb_gemini <=>" in sql and "emb_gemini IS NOT NULL" in sql
+    assert "emb_v4" not in sql
+
+
+def test_search_v4_space_uses_inner_product_on_emb_v4(monkeypatch):
+    """v4는 emb_v4 내적(<#>, 음의 내적)으로 정렬하고, 점수는 부호를 뒤집은 내적이다."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+    from db.search import search
+
+    session = _RecordingSession([(_row(1), -0.42), (_row(2), -0.30)])
+    tracks = search(session, [0.1] * 3072 + [1.0], space="v4")
+    sql = str(session.statements[0])
+    assert "emb_v4 <#>" in sql and "emb_v4 IS NOT NULL" in sql
+    # NOTE: select(TrackRow)가 emb_gemini를 SELECT 목록에는 넣는다(기존 동작). 정렬·필터에만 안 쓰이면 된다
+    assert "emb_gemini <=>" not in sql and "emb_gemini IS NOT NULL" not in sql
+    assert [track.track_id for track in tracks] == ["1", "2"]
+
+
+def test_known_genres_counts_the_same_search_column(monkeypatch):
+    """장르 목록도 검색과 같은 칸으로 세야 '목록엔 있는데 검색하면 0곡'이 안 생긴다."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+    from db.search import known_genres
+
+    class Session:
+        def execute(self, stmt):
+            self.statement = stmt
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    for space, column in (("gemini", "emb_gemini"), ("v4", "emb_v4")):
+        session = Session()
+        known_genres(session, space=space)
+        assert f"{column} IS NOT NULL" in str(session.statement)

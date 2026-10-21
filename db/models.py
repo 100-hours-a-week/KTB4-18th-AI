@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     JSON, BigInteger, Date, DateTime, String, Text, create_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, deferred, mapped_column, sessionmaker
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
@@ -17,6 +17,9 @@ MODEL_VERSION = "laion-clap-htsat-fused"
 
 GEMINI_EMB_DIM = 3072
 GEMINI_MODEL_VERSION = "gemini-embedding-2"
+
+# NOTE: v4 검색 공간 = [s_mix (3072), −β·r(s) (1)]. backend/recommendation/adapter.py 참고
+V4_EMB_DIM = GEMINI_EMB_DIM + 1
 
 from pgvector.sqlalchemy import Vector
 VectorType = Vector(EMB_DIM)
@@ -52,6 +55,10 @@ class TrackRow(Base):
 
     # NOTE: gemini-embedding-2 오디오·텍스트 동일 공간 임베딩. emb_clap과 같은 NULL=대기열 패턴
     emb_gemini = mapped_column(Vector(GEMINI_EMB_DIM), nullable=True)
+
+    # NOTE: 곡 어댑터 + 허브 보정을 미리 계산한 v4 검색용 벡터 (scripts/backfill_emb_v4.py가 채운다).
+    # deferred: select(TrackRow)가 이 칸을 읽지 않아서, 칸을 추가하기 전의 DB에서도 기존 검색이 그대로 돈다.
+    emb_v4 = deferred(mapped_column(Vector(V4_EMB_DIM), nullable=True))
 
     # NOTE: 임베딩 모델이 다르면 전부 다시 해야 하므로 추가
     model_version: Mapped[str] = mapped_column(String(128), nullable=True)
