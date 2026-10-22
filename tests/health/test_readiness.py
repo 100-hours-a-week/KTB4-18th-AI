@@ -13,6 +13,9 @@ from backend.health import readiness
 @pytest.fixture
 def database(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+    # NOTE: backend.main의 load_dotenv가 로컬 .env의 SEARCH_EMBEDDING을 읽어 오므로, 기본값(gemini)에서 시작한다.
+    # v4를 보는 테스트는 각자 SEARCH_EMBEDDING=v4를 다시 설정한다.
+    monkeypatch.delenv("SEARCH_EMBEDDING", raising=False)
     connect = MagicMock()
     connection = connect.return_value.__enter__.return_value
     connection.execute.return_value.fetchone.return_value = (True,)
@@ -62,5 +65,29 @@ def test_not_ready_with_invalid_configuration(database, monkeypatch, url):
         monkeypatch.delenv("DATABASE_URL")
     else:
         monkeypatch.setenv("DATABASE_URL", url)
+    assert TestClient(main.app).get("/readiness").status_code == 503
+    connect.assert_not_called()
+
+
+def test_readiness_follows_v4_search_space(database, monkeypatch):
+    """SEARCH_EMBEDDING=v4면 emb_v4가 채워진 곡이 있는지 본다."""
+    _, connection = database
+    monkeypatch.setenv("SEARCH_EMBEDDING", "v4")
+    assert TestClient(main.app).get("/readiness").status_code == 200
+    query = connection.execute.call_args.args[0]
+    assert "emb_v4 IS NOT NULL AND store_url IS NOT NULL" in query
+
+
+def test_not_ready_when_v4_asset_missing(database, monkeypatch, tmp_path):
+    connect, _ = database
+    monkeypatch.setenv("SEARCH_EMBEDDING", "v4")
+    monkeypatch.setattr(readiness, "ASSET", tmp_path / "missing.npz")
+    assert TestClient(main.app).get("/readiness").status_code == 503
+    connect.assert_not_called()
+
+
+def test_not_ready_on_search_embedding_typo(database, monkeypatch):
+    connect, _ = database
+    monkeypatch.setenv("SEARCH_EMBEDDING", "v 4")
     assert TestClient(main.app).get("/readiness").status_code == 503
     connect.assert_not_called()
