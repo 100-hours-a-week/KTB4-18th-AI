@@ -30,6 +30,12 @@ def _dedup(hits: list[Hit], k: int) -> list[Hit]:
             break
     return out
 
+def search_column(space: str):
+    """검색 공간(adapter.search_space())에 해당하는 tracks 칸."""
+
+    return TrackRow.emb_v4 if space == "v4" else TrackRow.emb_gemini
+
+
 def search(
     session: Session,
     qvec: np.ndarray,
@@ -39,15 +45,25 @@ def search(
     genres: list[str] = None,
     max_year: int = None,
     overfetch: int = 6,
+    space: str = "gemini",
 ) -> list[Track]:
-    """임베딩 유사도와 검색 조건으로 추천곡을 선정한다."""
+    """임베딩 유사도와 검색 조건으로 추천곡을 선정한다.
+
+    space="gemini": qvec은 검색어 임베딩(3072), emb_gemini와 코사인 거리
+    space="v4": qvec은 to_v4_query()의 [q′, 1](3073), emb_v4와 내적
+    """
 
     # NOTE: overfetch 방식은 일리는 있으나, 더 많이 가져오는데 문제가 있으면 수정해도 괜찮다
-    qvec = l2norm(np.asarray(qvec, dtype=np.float32))
     n = k * overfetch
     exclude_ids = exclude_ids or set()
+    column = search_column(space)
 
-    dist = TrackRow.emb_gemini.cosine_distance(qvec)
+    if space == "v4":
+        # NOTE: [q′, 1]·[s_mix, −β·r(s)] = q′·s_mix − β·r(s). 코사인은 곡 벡터 길이(r(s)마다 다름)로
+        # 나눠 허브 패널티를 비트므로 내적을 쓴다. pgvector <#>는 음의 내적이라 오름차순 정렬이 그대로 맞다.
+        dist = column.max_inner_product(np.asarray(qvec, dtype=np.float32))
+    else:
+        dist = column.cosine_distance(l2norm(np.asarray(qvec, dtype=np.float32)))
 
     def candidates(genre_filter: list[str] | None) -> list[Hit]:
         stmt = (
@@ -55,8 +71,8 @@ def search(
             # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
             # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
             # 채워질 때까지 검색 대상에서 뺀다.
-            # emb_gemini가 NULL인 곡(아직 gemini로 임베딩 안 된 대기열)은 검색 대상에서 뺀다.
-            .where(TrackRow.emb_gemini.isnot(None), TrackRow.store_url.isnot(None))
+            # 검색 칸이 NULL인 곡(아직 임베딩·v4 계산이 안 된 대기열)은 검색 대상에서 뺀다.
+            .where(column.isnot(None), TrackRow.store_url.isnot(None))
             .order_by(dist)
             .limit(n)
         )
@@ -68,8 +84,11 @@ def search(
             stmt = stmt.where(TrackRow.release_date <= date(max_year, 12, 31))
         if genre_filter:
             stmt = stmt.where(TrackRow.genre.in_(genre_filter))
-        # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지
-        return [Hit(track=r[0], score=1.0 - float(r[1])) for r in session.execute(stmt).all()]
+        # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지. v4는 음의 내적이라 부호만 뒤집는다
+        rows = session.execute(stmt).all()
+        if space == "v4":
+            return [Hit(track=r[0], score=-float(r[1])) for r in rows]
+        return [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
 
     hits = _dedup(candidates(genres), k)
 
@@ -160,11 +179,11 @@ def lookup(
 MIN_GENRE_TRACKS = 10
 
 
-def known_genres(session: Session) -> list[str]:
+def known_genres(session: Session, space: str = "gemini") -> list[str]:
     """검색 가능한 곡이 MIN_GENRE_TRACKS곡 이상인 장르 목록(정렬). classify 프롬프트가
     장르 필터 후보로 쓴다 — 카탈로그가 늘어나면 자동으로 반영된다.
 
-    search()와 같은 조건(emb_gemini·store_url 있음)으로 세야, 목록에 있는데 검색하면
+    search()와 같은 조건(같은 검색 칸·store_url 있음)으로 세야, 목록에 있는데 검색하면
     0곡인 장르가 생기지 않는다.
     """
 
@@ -172,7 +191,7 @@ def known_genres(session: Session) -> list[str]:
         select(TrackRow.genre)
         .where(
             TrackRow.genre.isnot(None),
-            TrackRow.emb_gemini.isnot(None),
+            search_column(space).isnot(None),
             TrackRow.store_url.isnot(None),
         )
         .group_by(TrackRow.genre)

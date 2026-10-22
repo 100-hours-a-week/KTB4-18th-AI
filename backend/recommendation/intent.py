@@ -26,9 +26,10 @@ def known_genres() -> list[str]:
             # DATABASE_URL이 아직 없을 수 있어, 호출 시점까지 import를 늦춘다.
             from db.models import SessionLocal
             from db.search import known_genres as db_known_genres
+            from backend.recommendation.adapter import search_space
 
             with SessionLocal() as session:
-                _genre_cache = db_known_genres(session)
+                _genre_cache = db_known_genres(session, space=search_space())
         except Exception:  # noqa: BLE001
             _genre_cache = []
     return _genre_cache
