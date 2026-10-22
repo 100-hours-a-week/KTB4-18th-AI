@@ -13,6 +13,9 @@ from backend.health import readiness
 @pytest.fixture
 def database(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+    # NOTE: backend.main의 load_dotenv가 로컬 .env의 SEARCH_EMBEDDING을 읽어 오므로, 기본값(gemini)에서 시작한다.
+    # v4를 보는 테스트는 각자 SEARCH_EMBEDDING=v4를 다시 설정한다.
+    monkeypatch.delenv("SEARCH_EMBEDDING", raising=False)
     connect = MagicMock()
     connection = connect.return_value.__enter__.return_value
     connection.execute.return_value.fetchone.return_value = (True,)
