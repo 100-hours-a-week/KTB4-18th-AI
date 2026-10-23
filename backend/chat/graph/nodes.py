@@ -10,7 +10,8 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
-    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, resolve_intent, year_range,
+    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, resolve_intent, year_questions,
+    year_range,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -27,10 +28,9 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
 
 
 # NOTE: Jev는 정해진 선택지 중 하나를 확률과 함께 고르는 결정 전용 모델이라, 고속 모드의
-# 첫 번째 Jev 호출에서 의도, "제목을 말했는가", 발매 시기를 묻는다. 아티스트·장르 질문은
-# 선택지(seed 아티스트, DB 장르 목록)가 DB에서 오므로 jev_node에서 fast의 함수로 합친다.
-# NOTE: "영어 이메일 하나 써주고", "요즘 새로 나온 게임 알려주고"처럼 음악 외 요청의 말이
-# 연도·장르로 새어 들어가서(→ recent, J-Pop 등), 음악 요청 부분만 보라고 지시한다.
+# 첫 번째 Jev 호출에서 의도와 "제목을 말했는가"를 묻는다. 아티스트·장르·발매연도 질문은
+# 선택지(seed 아티스트, DB 장르 목록, 올해까지의 연도)가 실행 시점에 정해지므로 jev_node에서
+# fast의 함수로 합친다.
 JEV_QUESTIONS = {
     "intent": {
         "type": "choice",
@@ -46,19 +46,6 @@ JEV_QUESTIONS = {
         "type": "noul",
         "instructions": "이번 메시지에 특정 곡 제목이 들어 있는가",
         "criteria": {"true": "곡 제목을 말함", "false": "아티스트만 말했거나 곡 제목이 없음"},
-    },
-    "year": {
-        "type": "choice",
-        "instructions": "음악 외 요청 부분은 무시하고, 사용자가 원하는 노래의 발매 시기",
-        "criteria": {
-            "none": "발매 시기 언급 없음",
-            "1980s": "1980년대 노래",
-            "1990s": "1990년대 노래",
-            "2000s": "2000년대 노래",
-            "2010s": "2010년대 노래",
-            "2020s": "2020년대 노래",
-            "recent": "최신곡, 요즘 나온 노래",
-        },
     },
 }
 
@@ -80,14 +67,15 @@ def jev_node(state: RecommendationState) -> dict:
 
     # NOTE: Jev가 실패해도 사용자에게 오류를 보이지 않고, 그 턴만 classify(LLM)로 처리한다.
     try:
-        questions = {**JEV_QUESTIONS, "artist": artist_question(), "genre": genre_question()}
+        questions = {**JEV_QUESTIONS, "artist": artist_question(), "genre": genre_question(),
+                     **year_questions()}
         answers = decide(jev_state(messages), questions)
         intent = resolve_intent(answers)
         rows = find_lookup_rows(messages, answers, shown_ids) if intent == "lookup" else None
     except JevUnavailable:
         return {"jev_failed": True}
 
-    min_year, max_year = year_range(answers["year"])
+    min_year, max_year = year_range(answers)
     result = {
         "jev_failed": False,
         "intent": intent,

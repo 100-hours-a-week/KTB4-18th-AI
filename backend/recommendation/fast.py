@@ -1,7 +1,7 @@
 """고속 모드 판단 로직: Jev 답을 해석해 의도를 정하고, LLM 없이 조회 곡을 찾는다.
 
-첫 번째 Jev 호출의 질문(nodes.JEV_QUESTIONS + artist_question() + genre_question())은
-jev_node가 보낸다.
+첫 번째 Jev 호출의 질문(nodes.JEV_QUESTIONS + artist_question() + genre_question() +
+year_questions())은 jev_node가 보낸다.
 Jev는 텍스트를 만들지 못해서, 조회는 "아티스트를 목록에서 고르기 → 그 아티스트 곡 제목과
 문자열 매칭 → 안 되면 곡 목록에서 고르기(두 번째 Jev 호출)" 순서로 하고, 그래도 확신이
 없으면 None을 돌려 classify(LLM)에 맡긴다.
@@ -41,6 +41,9 @@ SONG_CONFIDENT = 0.6
 # NOTE: 장르·연도는 검색의 하드 필터라 Jev가 자신 없게 고른 값은 쓰지 않고 임베딩 검색에
 # 맡긴다(장르 필터로 5곡이 안 차면 search()가 장르를 빼고 다시 채우지만, 연도는 풀지 않는다).
 FILTER_CONFIDENT = 0.5
+# NOTE: DB의 가장 오래된 곡은 1992년이지만, "80년대 노래"를 classify처럼 1980~1989로 필터해
+# 없다고 답하게 1980년부터 둔다.
+YEAR_MIN = 1980
 
 _seed_cache: list[str] | None = None
 
@@ -98,19 +101,51 @@ def genre_filter(answer: dict) -> list[str] | None:
     return [answer["choice"]]
 
 
-def year_range(answer: dict) -> tuple[int | None, int | None]:
-    """Jev 발매 시기 답을 (min_year, max_year)로 바꾼다. none이거나 자신 없으면 (None, None).
+def year_questions() -> dict:
+    """첫 번째 Jev 호출에 합칠 발매연도 시작·끝 질문. 선택지는 none + YEAR_MIN~올해.
 
-    "recent"(최신곡)는 classify 프롬프트와 같게 작년부터로 본다.
+    NOTE: 처음엔 연대(1990s, recent 등)를 골랐는데 "2024년 이후"(→2020s, 2020~2023이 섞임),
+    "2000년 이전"(→1990s, 그 전이 빠짐)처럼 구간으로 표현 못 하는 요청이 eval 연도 문장 10개 중
+    4개였다. 연도별 선택지는 50개 정도라 Choice(최대 255개)에 들어간다.
+    NOTE: Jev는 올해가 몇 년인지 몰라서 classify 프롬프트처럼 직접 알려준다.
     """
 
-    choice = answer["choice"]
-    if choice == "none" or answer["confidence"] < FILTER_CONFIDENT:
+    this_year = date.today().year
+    years = {str(y): f"{y}년" for y in range(YEAR_MIN, this_year + 1)}
+    return {
+        "year_from": {
+            "type": "choice",
+            "instructions": f"음악 외 요청 부분은 무시하고, 사용자가 원하는 노래 발매연도의 시작(이 해부터). "
+                            f"올해는 {this_year}년. 예: '1990년대'→1990, '2020년 이후'→2020, "
+                            f"'최신곡·요즘 나온 노래'→{this_year - 1}, '2015년 이전'→none",
+            "criteria": {"none": "시작 연도 조건 없음", **years},
+        },
+        "year_to": {
+            "type": "choice",
+            "instructions": f"음악 외 요청 부분은 무시하고, 사용자가 원하는 노래 발매연도의 끝(이 해까지). "
+                            f"올해는 {this_year}년. 예: '1990년대'→1999, '2015년 이전'→2014, "
+                            f"'2020년 이후'→none, '최신곡'→none",
+            "criteria": {"none": "끝 연도 조건 없음", **years},
+        },
+    }
+
+
+def year_range(answers: dict) -> tuple[int | None, int | None]:
+    """Jev 발매연도 시작·끝 답을 (min_year, max_year)로 바꾼다.
+
+    한쪽이 none이거나 자신 없으면 그쪽은 조건 없음(None)으로 두고, 시작이 끝보다 늦으면
+    잘못 고른 것이라 둘 다 버린다.
+    """
+
+    def pick(answer: dict) -> int | None:
+        if answer["choice"] == "none" or answer["confidence"] < FILTER_CONFIDENT:
+            return None
+        return int(answer["choice"])
+
+    start, end = pick(answers["year_from"]), pick(answers["year_to"])
+    if start and end and start > end:
         return None, None
-    if choice == "recent":
-        return date.today().year - 1, None
-    start = int(choice.removesuffix("s"))
-    return start, start + 9
+    return start, end
 
 
 def resolve_intent(answers: dict) -> str:

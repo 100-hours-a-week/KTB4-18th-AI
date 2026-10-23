@@ -25,12 +25,12 @@ def test_thread_messages_survive_graph_rebuild(monkeypatch):
 def test_fast_mode_switches_entry_to_jev(monkeypatch):
     classify_calls, jev_calls, embedded, searched = [], [], [], []
 
-    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year)
+    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year_from, year_to)
     jev_answers = {
-        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990s"),
-        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none"),
-        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none"),
-        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none"),
+        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990", "1999"),
+        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none"),
+        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none", "none"),
+        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none"),
     }
 
     def classify(_client, messages):
@@ -43,10 +43,11 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         # jev_state가 마지막 줄을 "이번 메시지(판단 대상): ..."로 만든다.
         message = state[-1].split(": ", 1)[1]
         jev_calls.append(message)
-        intent, artist, confidence, has_title, genre, year = jev_answers[message]
+        intent, artist, confidence, has_title, genre, year_from, year_to = jev_answers[message]
         return {"intent": {"choice": intent}, "artist": {"choice": artist, "confidence": confidence},
                 "has_title": {"noul": has_title}, "genre": {"choice": genre, "confidence": 0.9},
-                "year": {"choice": year, "confidence": 0.9}}
+                "year_from": {"choice": year_from, "confidence": 0.9},
+                "year_to": {"choice": year_to, "confidence": 0.9}}
 
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
@@ -67,6 +68,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [])
     monkeypatch.setattr(nodes, "artist_question", lambda: {})
     monkeypatch.setattr(nodes, "genre_question", lambda: {})
+    monkeypatch.setattr(nodes, "year_questions", lambda: {})
     monkeypatch.setattr(fast, "lookup_tracks_db", lambda **_kwargs: [akmu_row])
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
@@ -109,6 +111,7 @@ def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
     monkeypatch.setattr(nodes, "decide", decide)
     monkeypatch.setattr(nodes, "artist_question", lambda: {})
     monkeypatch.setattr(nodes, "genre_question", lambda: {})
+    monkeypatch.setattr(nodes, "year_questions", lambda: {})
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
     def send(message):
