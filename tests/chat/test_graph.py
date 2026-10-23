@@ -64,7 +64,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     monkeypatch.setattr(nodes, "embed_query", embed_query)
     monkeypatch.setattr(nodes, "vector_recommendation", vector_recommendation)
     monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [])
-    monkeypatch.setattr(nodes, "step1_questions", lambda: {})
+    monkeypatch.setattr(nodes, "artist_question", lambda: {})
     monkeypatch.setattr(fast, "lookup_tracks_db", lambda **_kwargs: [akmu_row])
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
@@ -105,7 +105,7 @@ def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
 
     monkeypatch.setattr(nodes, "classify", classify)
     monkeypatch.setattr(nodes, "decide", decide)
-    monkeypatch.setattr(nodes, "step1_questions", lambda: {})
+    monkeypatch.setattr(nodes, "artist_question", lambda: {})
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
     def send(message):

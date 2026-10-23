@@ -1,26 +1,15 @@
-"""고속 모드: Jev로 의도·조회 대상을 정하고, LLM 없이 곡을 찾는다.
+"""고속 모드 판단 로직: Jev 답을 해석해 의도를 정하고, LLM 없이 조회 곡을 찾는다.
 
-Jev는 정해진 선택지 중 하나를 확률과 함께 고르는 결정 전용 모델이라 텍스트를 만들지
-못한다. 그래서 조회는 "아티스트를 목록에서 고르기 → 그 아티스트 곡 제목과 문자열 매칭 →
-안 되면 곡 목록에서 고르기" 순서로 하고, 그래도 확신이 없으면 None을 돌려 classify(LLM)에
-맡긴다.
+첫 번째 Jev 호출의 질문(nodes.JEV_QUESTIONS + artist_question())은 jev_node가 보낸다.
+Jev는 텍스트를 만들지 못해서, 조회는 "아티스트를 목록에서 고르기 → 그 아티스트 곡 제목과
+문자열 매칭 → 안 되면 곡 목록에서 고르기(두 번째 Jev 호출)" 순서로 하고, 그래도 확신이
+없으면 None을 돌려 classify(LLM)에 맡긴다.
 """
 
 import re
 
 from backend.providers.jev import decide
 from backend.recommendation.retrieval import lookup_tracks_db, seed_artist_titles_db, seed_artists_db
-
-INTENT_QUESTION = {
-    "type": "choice",
-    "instructions": "음악 챗봇 사용자가 이번 메시지로 원하는 것",
-    "criteria": {
-        "recommend": "특정 아티스트 한 명으로 한정하지 않고 분위기·상황·장르·연도로 음악 추천을 원함",
-        "lookup": "특정 곡이나 아티스트의 정보를 찾거나, 특정 아티스트 한 명의 곡을 원함",
-        "guide": "챗봇 사용법이나 지원 범위를 물음",
-        "out_of_scope": "음악 추천·조회와 무관한 요청(인사, 잡담, 다른 주제, 의미 없는 입력)",
-    },
-}
 
 # NOTE: "조금 덜 시끄럽게"처럼 이번 메시지만으론 의도를 알 수 없는 후속 요청이 있어서
 # 최근 대화도 같이 보여준다. Jev는 판단에만 쓰니 몇 개 더 넣어도 흐려지지 않는다.
@@ -69,22 +58,14 @@ def jev_state(messages: list[str]) -> list[str]:
     return [f"이전 대화: {m}" for m in recent[:-1]] + [f"이번 메시지(판단 대상): {recent[-1]}"]
 
 
-def step1_questions() -> dict:
-    """1단계 Jev 요청: 의도와 조회 대상(아티스트, 제목을 말했는지)을 한 번에 묻는다."""
+def artist_question() -> dict:
+    """첫 번째 Jev 호출에 합칠 아티스트 질문. 선택지는 seed 아티스트 목록 + none."""
 
     return {
-        "intent": INTENT_QUESTION,
-        "artist": {
-            "type": "choice",
-            "instructions": "이번 메시지가 가리키는 아티스트. 한글 이름이면 같은 아티스트의 영문 표기를 고른다.",
-            "criteria": {**{a: a for a in known_seed_artists()},
-                         "none": "특정 아티스트를 말하지 않았거나 목록에 없음"},
-        },
-        "has_title": {
-            "type": "noul",
-            "instructions": "이번 메시지에 특정 곡 제목이 들어 있는가",
-            "criteria": {"true": "곡 제목을 말함", "false": "아티스트만 말했거나 곡 제목이 없음"},
-        },
+        "type": "choice",
+        "instructions": "이번 메시지가 가리키는 아티스트. 한글 이름이면 같은 아티스트의 영문 표기를 고른다.",
+        "criteria": {**{a: a for a in known_seed_artists()},
+                     "none": "특정 아티스트를 말하지 않았거나 목록에 없음"},
     }
 
 

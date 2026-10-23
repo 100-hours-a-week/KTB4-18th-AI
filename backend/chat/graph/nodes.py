@@ -9,7 +9,7 @@ from db.types import Track
 from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
-from backend.recommendation.fast import find_lookup_rows, jev_state, resolve_intent, step1_questions
+from backend.recommendation.fast import artist_question, find_lookup_rows, jev_state, resolve_intent
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
 
@@ -22,6 +22,28 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     if result["intent"] == "fast_mode":
         result["fast_mode"] = True
     return result
+
+
+# NOTE: Jev는 정해진 선택지 중 하나를 확률과 함께 고르는 결정 전용 모델이라, 고속 모드의
+# 첫 번째 Jev 호출에서 의도와 "제목을 말했는가"를 묻는다. 아티스트 질문은 선택지(seed
+# 아티스트 목록)가 DB에서 오므로 jev_node에서 artist_question()으로 합친다.
+JEV_QUESTIONS = {
+    "intent": {
+        "type": "choice",
+        "instructions": "음악 챗봇 사용자가 이번 메시지로 원하는 것",
+        "criteria": {
+            "recommend": "특정 아티스트 한 명으로 한정하지 않고 분위기·상황·장르·연도로 음악 추천을 원함",
+            "lookup": "특정 곡이나 아티스트의 정보를 찾거나, 특정 아티스트 한 명의 곡을 원함",
+            "guide": "챗봇 사용법이나 지원 범위를 물음",
+            "out_of_scope": "음악 추천·조회와 무관한 요청(인사, 잡담, 다른 주제, 의미 없는 입력)",
+        },
+    },
+    "has_title": {
+        "type": "noul",
+        "instructions": "이번 메시지에 특정 곡 제목이 들어 있는가",
+        "criteria": {"true": "곡 제목을 말함", "false": "아티스트만 말했거나 곡 제목이 없음"},
+    },
+}
 
 
 def jev_node(state: RecommendationState) -> dict:
@@ -41,7 +63,7 @@ def jev_node(state: RecommendationState) -> dict:
 
     # NOTE: Jev가 실패해도 사용자에게 오류를 보이지 않고, 그 턴만 classify(LLM)로 처리한다.
     try:
-        answers = decide(jev_state(messages), step1_questions())
+        answers = decide(jev_state(messages), {**JEV_QUESTIONS, "artist": artist_question()})
         intent = resolve_intent(answers)
         rows = find_lookup_rows(messages, answers, shown_ids) if intent == "lookup" else None
     except JevUnavailable:
@@ -59,7 +81,17 @@ def jev_node(state: RecommendationState) -> dict:
         "recommend_max_year": None,
     }
     if rows:
-        tracks = to_tracks(rows)
+        tracks = [
+            Track(
+                track_id=str(row.track_id),
+                title=row.title,
+                artist=row.artist,
+                artwork_url=row.artwork_url,
+                preview_url=row.preview_url,
+                store_url=row.store_url,
+            )
+            for row in rows[:5]
+        ]
         result |= {"lookup_status": "found", "lookup_tracks": tracks,
                    "shown_track_ids": [t.track_id for t in tracks]}
     return result
@@ -88,22 +120,6 @@ def search_node(state: RecommendationState) -> dict:
         max_year=state.get("recommend_max_year"),
     )
     return {"tracks": tracks, "shown_track_ids": [t.track_id for t in tracks]}
-
-
-def to_tracks(rows: list) -> list[Track]:
-    """DB 조회 결과(TrackRow)를 응답용 Track 카드로 바꾼다(최대 5곡)."""
-
-    return [
-        Track(
-            track_id=str(row.track_id),
-            title=row.title,
-            artist=row.artist,
-            artwork_url=row.artwork_url,
-            preview_url=row.preview_url,
-            store_url=row.store_url,
-        )
-        for row in rows[:5]
-    ]
 
 
 def lookup_node(state: RecommendationState) -> dict:
@@ -142,7 +158,17 @@ def lookup_node(state: RecommendationState) -> dict:
     if not rows:
         return {"lookup_status": "not_found"}
 
-    tracks = to_tracks(rows)
+    tracks = [
+        Track(
+            track_id=str(row.track_id),
+            title=row.title,
+            artist=row.artist,
+            artwork_url=row.artwork_url,
+            preview_url=row.preview_url,
+            store_url=row.store_url,
+        )
+        for row in rows[:5]
+    ]
     return {
         "lookup_status": "found",
         "lookup_tracks": tracks,
