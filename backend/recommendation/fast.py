@@ -1,14 +1,17 @@
 """고속 모드 판단 로직: Jev 답을 해석해 의도를 정하고, LLM 없이 조회 곡을 찾는다.
 
-첫 번째 Jev 호출의 질문(nodes.JEV_QUESTIONS + artist_question())은 jev_node가 보낸다.
+첫 번째 Jev 호출의 질문(nodes.JEV_QUESTIONS + artist_question() + genre_question())은
+jev_node가 보낸다.
 Jev는 텍스트를 만들지 못해서, 조회는 "아티스트를 목록에서 고르기 → 그 아티스트 곡 제목과
 문자열 매칭 → 안 되면 곡 목록에서 고르기(두 번째 Jev 호출)" 순서로 하고, 그래도 확신이
 없으면 None을 돌려 classify(LLM)에 맡긴다.
 """
 
 import re
+from datetime import date
 
 from backend.providers.jev import decide
+from backend.recommendation.intent import known_genres
 from backend.recommendation.retrieval import lookup_tracks_db, seed_artist_titles_db, seed_artists_db
 
 # NOTE: "조금 덜 시끄럽게"처럼 이번 메시지만으론 의도를 알 수 없는 후속 요청이 있어서
@@ -35,6 +38,9 @@ TITLE_LIKELY = 0.5
 # 자신 없는 경우는 낮게 나온다("사람들이 움직이는 게"→How People Move 0.66, "밤편지"→
 # Through the Night 0.2). 이보다 낮으면 classify에 맡긴다.
 SONG_CONFIDENT = 0.6
+# NOTE: 장르·연도는 검색의 하드 필터라 Jev가 자신 없게 고른 값은 쓰지 않고 임베딩 검색에
+# 맡긴다(장르 필터로 5곡이 안 차면 search()가 장르를 빼고 다시 채우지만, 연도는 풀지 않는다).
+FILTER_CONFIDENT = 0.5
 
 _seed_cache: list[str] | None = None
 
@@ -67,6 +73,44 @@ def artist_question() -> dict:
         "criteria": {**{a: a for a in known_seed_artists()},
                      "none": "특정 아티스트를 말하지 않았거나 목록에 없음"},
     }
+
+
+def genre_question() -> dict:
+    """첫 번째 Jev 호출에 합칠 장르 질문. 선택지는 classify와 같은 DB 장르 목록 + none.
+
+    NOTE: classify는 장르를 여러 개 줄 수 있지만 Jev Choice는 하나만 고른다. 단일 선택으로도
+    추천 문장 94개 중 90개가 classify와 일치해서, 묶음("힙합 계열")은 필요해지면 넣는다.
+    """
+
+    return {
+        "type": "choice",
+        "instructions": "음악 외 요청 부분(응답 언어, 다른 주제 등)은 무시하고, 사용자가 원하는 노래의 장르. "
+                        "목록에 맞는 장르가 없으면 none",
+        "criteria": {**{g: g for g in known_genres()}, "none": "장르 언급이 없거나 목록에 없는 장르"},
+    }
+
+
+def genre_filter(answer: dict) -> list[str] | None:
+    """Jev 장르 답을 검색 필터로 바꾼다. none이거나 자신 없으면 필터 없음."""
+
+    if answer["choice"] == "none" or answer["confidence"] < FILTER_CONFIDENT:
+        return None
+    return [answer["choice"]]
+
+
+def year_range(answer: dict) -> tuple[int | None, int | None]:
+    """Jev 발매 시기 답을 (min_year, max_year)로 바꾼다. none이거나 자신 없으면 (None, None).
+
+    "recent"(최신곡)는 classify 프롬프트와 같게 작년부터로 본다.
+    """
+
+    choice = answer["choice"]
+    if choice == "none" or answer["confidence"] < FILTER_CONFIDENT:
+        return None, None
+    if choice == "recent":
+        return date.today().year - 1, None
+    start = int(choice.removesuffix("s"))
+    return start, start + 9
 
 
 def resolve_intent(answers: dict) -> str:

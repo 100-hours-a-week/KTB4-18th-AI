@@ -25,12 +25,12 @@ def test_thread_messages_survive_graph_rebuild(monkeypatch):
 def test_fast_mode_switches_entry_to_jev(monkeypatch):
     classify_calls, jev_calls, embedded, searched = [], [], [], []
 
-    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title)
+    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year)
     jev_answers = {
-        "잔잔한 노래": ("recommend", "none", 0.9, 0.0),
-        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0),
-        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05),
-        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5),
+        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990s"),
+        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none"),
+        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none"),
+        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none"),
     }
 
     def classify(_client, messages):
@@ -43,9 +43,10 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         # jev_state가 마지막 줄을 "이번 메시지(판단 대상): ..."로 만든다.
         message = state[-1].split(": ", 1)[1]
         jev_calls.append(message)
-        intent, artist, confidence, has_title = jev_answers[message]
+        intent, artist, confidence, has_title, genre, year = jev_answers[message]
         return {"intent": {"choice": intent}, "artist": {"choice": artist, "confidence": confidence},
-                "has_title": {"noul": has_title}}
+                "has_title": {"noul": has_title}, "genre": {"choice": genre, "confidence": 0.9},
+                "year": {"choice": year, "confidence": 0.9}}
 
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
@@ -55,7 +56,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         return [0.0]
 
     def vector_recommendation(_vector, **kwargs):
-        searched.append(kwargs["genres"])
+        searched.append((kwargs["genres"], kwargs["min_year"], kwargs["max_year"]))
         return []
 
     monkeypatch.setattr(nodes, "classify", classify)
@@ -65,6 +66,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     monkeypatch.setattr(nodes, "vector_recommendation", vector_recommendation)
     monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [])
     monkeypatch.setattr(nodes, "artist_question", lambda: {})
+    monkeypatch.setattr(nodes, "genre_question", lambda: {})
     monkeypatch.setattr(fast, "lookup_tracks_db", lambda **_kwargs: [akmu_row])
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
@@ -72,7 +74,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         return workflow.build_graph().invoke({"message": message, "messages": [message]}, config=config)
 
     assert send("고속 모드 켜줘")["fast_mode"] is True
-    assert send("잔잔한 노래")["intent"] == "recommend"
+    assert send("90년대 잔잔한 힙합")["intent"] == "recommend"
     assert send("오늘 점심 뭐 먹지")["intent"] == "out_of_scope"
     # 아티스트만 말한 조회는 classify 없이 Jev가 고른 아티스트로 바로 찾는다.
     artist_only = send("악뮤 노래")
@@ -85,10 +87,10 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     assert looked_up["fast_mode"] is True
 
     assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘"]
-    assert jev_calls == ["잔잔한 노래", "오늘 점심 뭐 먹지", "악뮤 노래", "그 노래 찾아줘"]
-    # 고속 모드 전 classify가 남긴 장르 필터가 검색에 새어 들어가면 안 된다.
-    assert embedded == ["잔잔한 노래"]
-    assert searched == [None]
+    assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "악뮤 노래", "그 노래 찾아줘"]
+    # 고속 모드 전 classify가 남긴 장르(Pop) 대신 Jev가 고른 장르·연도로 검색한다.
+    assert embedded == ["90년대 잔잔한 힙합"]
+    assert searched == [(["Hip-Hop"], 1990, 1999)]
 
 
 def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
@@ -106,6 +108,7 @@ def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
     monkeypatch.setattr(nodes, "classify", classify)
     monkeypatch.setattr(nodes, "decide", decide)
     monkeypatch.setattr(nodes, "artist_question", lambda: {})
+    monkeypatch.setattr(nodes, "genre_question", lambda: {})
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
     def send(message):
