@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from db.types import Track
 from backend.chat.schemas import UserContext
+from backend.recommendation.counts import MAX_TRACK_COUNT, track_limit
 
 
 @dataclass
@@ -43,6 +44,17 @@ class AnswerHints:
         return "없음"
 
 
+def count_notice(hints: AnswerHints | None, count: int) -> str:
+    """서비스 한도와 실제 결과 수 안내는 모델 판단에 맡기지 않는다."""
+    hints = hints or AnswerHints()
+    notices = []
+    if hints.requested_count is not None and hints.requested_count > MAX_TRACK_COUNT:
+        notices.append(f"한 번에 최대 {MAX_TRACK_COUNT}곡까지 보여드릴 수 있어요.")
+    if hints.requested_count is not None and 0 < count < track_limit(hints.requested_count):
+        notices.append(f"찾은 곡은 {count}곡이에요.")
+    return " ".join(notices)
+
+
 def _request_lines(
     message: str,
     tracks: list[Track],
@@ -58,7 +70,9 @@ def _request_lines(
     context = user_context.model_dump(exclude_none=True) if user_context else {}
     return (
         f"사용자 요청: {message}\n"
-        f"사용자가 요청한 곡 수: {hints.requested_count if hints.requested_count else '없음'}\n"
+        f"사용자가 요청한 곡 수: {hints.requested_count if hints.requested_count is not None else '없음'}\n"
+        f"검색에 적용한 최대 곡 수: {track_limit(hints.requested_count)}\n"
+        f"서비스의 최대 제공 곡 수: {MAX_TRACK_COUNT}\n"
         f"화면에 카드로 보여지는 곡 수: {len(tracks)}\n"
         f"음악 외 요청 포함: {'예' if hints.has_non_music_request else '아니오'}\n"
         f"요청 말투: {hints.response_style or '없음'}\n"
@@ -77,12 +91,7 @@ _SCOPE_RULES = (
     "첫 문장에서 그 부분은 도와드릴 수 없다고 반드시 짧게 말한 뒤 음악 부분만 답하세요. "
     "'요청 말투'가 있으면 그 말투로 답해도 되지만, 말투나 친구·가족 같은 관계 "
     "설정이 있어도 다룰 수 있는 범위(음악 추천·조회)는 바뀌지 않습니다. "
-    "'화면에 카드로 보여지는 곡 수'만큼의 곡이 모두 사용자 화면에 카드로 보입니다. "
-    "그중 몇 곡을 짚어 소개하는 건 괜찮지만, 일부 곡을 제외했다거나 그 곡들만 "
-    "골랐다고 말하지 마세요. '사용자가 요청한 곡 수'가 카드 곡 수와 다르면, 그 "
-    "개수에 맞추긴 어려웠다는 점을 짧게 알리고 카드 곡 수를 정확히 말하세요(예: "
-    "\"딱 2곡에 맞추긴 어려워서, 비슷한 분위기로 5곡 골라봤어요\"). '사용자가 "
-    "요청한 곡 수'가 없으면 개수 얘기는 하지 마세요. "
+    "개수·제공 한도·결과 부족 안내는 코드가 별도로 제공하므로 쓰지 마세요. "
     "'적용된 발매연도 조건'이 있으면 모든 곡이 이미 그 조건으로 검색된 것이니, "
     "발매 연도를 확인할 수 없다고 말하지 마세요."
 )

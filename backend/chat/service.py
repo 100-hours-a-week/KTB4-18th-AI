@@ -19,6 +19,7 @@ GUIDE_TEXT = (
 OUT_OF_SCOPE_TEXT = "죄송해요, 저는 음악 추천과 곡 정보 조회만 도와드릴 수 있어요."
 NOT_FOUND_TEXT = "요청하신 곡 정보를 찾지 못했어요. 곡 제목이나 아티스트명을 다시 확인해 주세요."
 CLARIFY_TEXT = {
+    "invalid_count": "곡 수는 1곡 이상으로 알려주세요. 예: '잔잔한 노래 2곡 추천해줘'",
     # NOTE: 채팅방을 나가면 대화 기억이 사라지고 추천곡만 히스토리에 남는 구조라,
     # 대화에 없는 내용을 가리키면 히스토리를 안내한다.
     "missing_reference": (
@@ -72,6 +73,9 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     )
 
     intent = result["intent"]
+    count = result.get("requested_count")
+    if intent in ("recommend", "lookup") and count is not None and count < 1:
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT["invalid_count"])
 
     if intent == "recommend":
         if result["recommend_unsupported_condition"]:

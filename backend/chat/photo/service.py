@@ -43,6 +43,7 @@ def recommend_scene(scene: Scene, thread_id: str) -> list[dict]:
         "messages": ["사진의 장소 맥락: " + scene.model_dump_json()],
         "intent": "recommend", "recommend_query": scene.music_query,
         "recommend_genres": None, "recommend_min_year": None, "recommend_max_year": None,
+        "requested_count": None,
     }, config={"configurable": {"thread_id": thread_id}})
     return [track.model_dump() for track in result["tracks"]]
 

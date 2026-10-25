@@ -8,10 +8,11 @@ from openai import OpenAI
 from db.types import Track
 from backend.chat.schemas import UserContext
 from backend.chat.answer import (
-    AnswerHints, answer_input, answer_instructions, lookup_answer_input, lookup_answer_instructions,
+    AnswerHints, answer_input, answer_instructions, count_notice,
+    lookup_answer_input, lookup_answer_instructions,
 )
 
-NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 조금 더 구체적인 질문과 함께 다시 요청해 주세요."
+NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 분위기·장르·연도 조건을 바꿔 다시 요청해 주세요."
 
 
 def sse(event: str, data: Any) -> str:
@@ -30,7 +31,8 @@ def stream_answer(
     """추천 문장 조각과 완성된 추천곡을 순서대로 전송한다."""
 
     if not tracks:
-        yield sse("text", {"delta": NO_TRACKS_MESSAGE})
+        notice = count_notice(hints, 0)
+        yield sse("text", {"delta": f"{notice}\n\n{NO_TRACKS_MESSAGE}" if notice else NO_TRACKS_MESSAGE})
         yield sse("tracks", {"tracks": []})
         yield sse("done", {})
         return
@@ -51,9 +53,13 @@ def stream_answer(
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
+                    notice = count_notice(hints, len(tracks))
+                    if notice:
+                        yield sse("text", {"delta": "\n\n" + notice})
+                    cards = [track.model_dump() for track in tracks]
                     yield sse(
                         "tracks",
-                        {"tracks": [track.model_dump() for track in tracks]},
+                        {"tracks": cards},
                     )
                     yield sse("done", {})
                     return
@@ -103,9 +109,13 @@ def stream_lookup_answer(
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
+                    notice = count_notice(hints, len(tracks))
+                    if notice:
+                        yield sse("text", {"delta": "\n\n" + notice})
+                    cards = [track.model_dump() for track in tracks]
                     yield sse(
                         "tracks",
-                        {"tracks": [track.model_dump() for track in tracks]},
+                        {"tracks": cards},
                     )
                     yield sse("done", {})
                     return

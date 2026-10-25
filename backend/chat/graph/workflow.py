@@ -33,6 +33,9 @@ def route_by_intent(state: RecommendationState) -> str:
     """
 
     intent = state["intent"]
+    count = state.get("requested_count")
+    if intent in ("recommend", "lookup") and count is not None and count < 1:
+        return END
     if intent == "recommend":
         if state["recommend_unsupported_condition"] or not state["recommend_has_enough_info"]:
             return END

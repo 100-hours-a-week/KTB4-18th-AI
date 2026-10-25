@@ -337,3 +337,17 @@ def test_stream_closed_before_analysis_is_logged_as_aborted(monkeypatch, caplog)
     asyncio.run(first_event_then_close())
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:"))
     assert "provider=None outcome=aborted" in line
+
+
+def test_photo_resets_previous_text_count(monkeypatch):
+    """의도 분류를 생략하는 사진 검색에서도 이전 텍스트의 곡 수를 초기화한다."""
+    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
+    counts = []
+    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **kwargs: counts.append(kwargs["k"]) or [])
+    monkeypatch.setattr(nodes, "classify", lambda *_args: {"intent": "guide", "requested_count": 2})
+    thread = str(uuid4())
+    workflow.build_graph().invoke({"messages": ["노래 2곡"]}, config={
+        "configurable": {"thread_id": thread, "client": object()}})
+    service.recommend_scene(scene(), thread)
+    assert counts == [5]
