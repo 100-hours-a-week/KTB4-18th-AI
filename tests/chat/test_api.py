@@ -354,7 +354,7 @@ def test_recommend_forwards_genres_and_year_range_to_search(client, monkeypatch)
 
 
 def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
-    """검색·답변 생성이 이번 턴 원문이 아니라 classify가 재구성한 recommend_query를 쓰는지 확인한다.
+    """검색은 재구성한 문장을 쓰고, 답변에는 원문과 검색 문장을 구분해 전달한다.
 
     후속 요청("방금 추천한 곡들은 빼고...")은 원문만으론 원래 분위기가 안 담겨 있어서,
     embed_node/search_node가 실수로 state["message"]로 되돌아가면 이 테스트가 잡아준다.
@@ -389,11 +389,10 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
     assert embed_calls == [resolved_query]
     assert search_calls == [[0.1, 0.2, 0.3]]
 
-    # 최종 답변 생성(stream_answer)도 body.message가 아니라 recommend_query를 받아야 한다.
-    # (한때 main.py가 body.message를 그대로 넘겨서, "이전에 추천된 곡 목록이 없어..."처럼
-    # LLM이 내부 제외 처리를 스스로 검증하려다 헛소리를 하는 문제가 있었다.)
+    # 후속 요청 원문과, 이전 상황을 합친 검색 문장을 함께 전달한다.
     answer_call = fake_openai.responses.calls[0]
-    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
+    assert "사용자 원문: 방금 추천한 곡들은 빼고 다른 곡 3개 추천해줘" in answer_call["input"]
+    assert f"해석한 음악 요청·검색 문장: {resolved_query}" in answer_call["input"]
 
 
 def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch):
@@ -420,7 +419,7 @@ def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch
 
     assert response.status_code == 200
     answer_input = fake_openai.responses.calls[0]["input"]
-    assert "사용자 요청: 퇴근길에 듣기 좋은 노래" in answer_input
+    assert "해석한 음악 요청·검색 문장: 퇴근길에 듣기 좋은 노래" in answer_input
     assert "음악 외 요청 포함: 예" in answer_input
     assert "요청 말투: 딸에게 말하는 아빠 말투" in answer_input
 
@@ -532,10 +531,10 @@ def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     assert len(fake_openai.responses.calls) == 1
     assert '"reason"' not in fake_openai.responses.calls[0]["input"]
     assert "event: done" in response.text
-    # 최종 답변 생성(stream_lookup_answer)도 recommend처럼 body.message가 아니라
-    # classify가 재구성한 recommend_query를 받아야 한다.
+    # 조회도 원문과 해석된 조회 대상을 구분한다.
     answer_call = fake_openai.responses.calls[0]
-    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
+    assert "사용자 원문: Dynamite BTS 노래 보여줘" in answer_call["input"]
+    assert f"해석한 음악 요청·검색 문장: {resolved_query}" in answer_call["input"]
 
 
 def test_lookup_title_only_multiple_artists_are_all_shown_as_found(client, monkeypatch):
