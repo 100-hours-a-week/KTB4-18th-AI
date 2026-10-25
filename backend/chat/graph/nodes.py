@@ -2,6 +2,8 @@
 각 노드는 기존 로직을 그대로 호출하는 얇은 wrapper다.
 """
 
+import json
+
 from langchain_core.runnables import RunnableConfig
 
 from backend.chat.graph.state import RecommendationState
@@ -16,7 +18,11 @@ from backend.recommendation.counts import track_limit
 def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 분류한다."""
 
-    return classify(config["configurable"]["client"], state["messages"])
+    messages = list(state["messages"])
+    if state.get("recent_tracks"):
+        messages.insert(-1, "챗봇이 최근 전송한 곡 목록(번호는 카드 순서): "
+                        + json.dumps(state["recent_tracks"], ensure_ascii=False))
+    return classify(config["configurable"]["client"], messages)
 
 
 def embed_node(state: RecommendationState) -> dict:
@@ -42,7 +48,7 @@ def search_node(state: RecommendationState) -> dict:
         max_year=state.get("recommend_max_year"),
         k=track_limit(state.get("requested_count")),
     )
-    return {"tracks": tracks, "shown_track_ids": [t.track_id for t in tracks]}
+    return {"tracks": tracks}
 
 
 def lookup_node(state: RecommendationState) -> dict:
@@ -96,7 +102,6 @@ def lookup_node(state: RecommendationState) -> dict:
     return {
         "lookup_status": "found",
         "lookup_tracks": tracks,
-        "shown_track_ids": [t.track_id for t in tracks],
     }
 
 

@@ -147,6 +147,20 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     return TestClient(main.app), fake_openai
 
 
+@pytest.mark.parametrize("intent", ["recommend", "lookup"])
+def test_router_connects_emitted_cards_to_next_request(client, monkeypatch, intent):
+    test_client, _ = client
+    monkeypatch.setattr(nodes, "classify", lambda *_args: classification(intent, lookup_artist="HYUKOH"))
+    monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [make_track_row()])
+    first = test_client.post("/v1/chat/messages", json=request_body("노래 추천해줘"))
+    assert "event: tracks" in first.text
+    seen = []
+    monkeypatch.setattr(nodes, "classify", lambda _client, messages: seen.extend(messages) or classification("guide"))
+    test_client.post("/v1/chat/messages", json=request_body("첫 번째 곡 가수 노래 더"))
+    snapshot = json.loads(seen[-2].split(": ", 1)[1])
+    assert snapshot == [{"rank": 1, "track_id": "123" if intent == "recommend" else "999",
+                         "title": "TOMBOY", "artist": "HYUKOH"}]
+    assert seen[-1] == "첫 번째 곡 가수 노래 더"
 
 
 def test_chat_streams_text_before_completed_track_cards(
@@ -636,4 +650,17 @@ def test_lookup_no_target_asks_without_db_call(client, monkeypatch):
 
     assert response.status_code == 200
     assert 'event: tracks\ndata: {"tracks": []}' in response.text
+    assert fake_openai.responses.calls == []
+
+
+def test_ambiguous_reference_with_recent_cards_asks_for_card_order(client, monkeypatch):
+    test_client, fake_openai = client
+    workflow.record_shown_tracks(THREAD_ID, [
+        {"track_id": "1", "title": "첫 곡", "artist": "가수"},
+        {"track_id": "2", "title": "다음 곡", "artist": "가수"},
+    ])
+    monkeypatch.setattr(nodes, "classify", lambda client, messages: classification("clarify"))
+    response = test_client.post("/v1/chat/messages", json=request_body("그 곡 다시"))
+    assert "카드 순서나 곡 제목" in response.text
+    assert "대화에서 찾지 못했어요" not in response.text
     assert fake_openai.responses.calls == []

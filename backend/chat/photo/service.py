@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 import httpx
 from fastapi import HTTPException, UploadFile
 
-from backend.chat.graph.workflow import build_graph
+from backend.chat.graph.workflow import build_graph, record_shown_tracks
 from backend.chat.photo import image, vlm
 from backend.chat.photo.schemas import Scene
 from backend.chat.streaming import sse
@@ -135,6 +135,7 @@ async def open_photo_stream(
                 tracks = await asyncio.shield(worker)
                 if not tracks:
                     yield sse("text", {"delta": "\n\n조건에 맞는 곡을 찾지 못했어요."})
+                record_shown_tracks(thread, tracks)
                 yield sse("tracks", {"tracks": tracks})
                 outcome = "ok"
                 yield sse("done", {"elapsed_ms": round((time.monotonic() - started) * 1000)})

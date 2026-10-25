@@ -27,6 +27,10 @@ CLARIFY_TEXT = {
         "이어지지 않고, 추천받았던 곡은 히스토리에서 다시 확인하실 수 있어요. "
         "찾으시는 곡이나 분위기를 다시 알려주시면 도와드릴게요."
     ),
+    "ambiguous_reference": (
+        "어떤 곡을 말씀하시는지 카드 순서나 곡 제목으로 알려주세요. "
+        "예: '두 번째 곡 다시 보여줘'"
+    ),
     "lookup_ambiguous": (
         "어떤 곡이나 아티스트를 찾으시는지 조금 더 구체적으로 알려주세요. 예: '아이유 밤편지'"
     ),
@@ -92,7 +96,8 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         return ChatOutcome(kind="static", text=GUIDE_TEXT)
 
     if intent == "clarify":
-        return ChatOutcome(kind="static", text=CLARIFY_TEXT["missing_reference"])
+        key = "ambiguous_reference" if result.get("recent_tracks") else "missing_reference"
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT[key])
 
     if intent == "lookup":
         status = result["lookup_status"]

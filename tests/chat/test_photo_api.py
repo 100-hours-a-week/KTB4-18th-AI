@@ -115,6 +115,8 @@ def test_real_stream_searches_after_scene_and_reports_failure(monkeypatch):
         assert events == ["status", "verdict", "scene", "text", "status", "tracks", "done"]
         assert f'{{"delta": "{scene().recommendation_context}"}}' in response.text
         assert "골랐어요" not in response.text
+        state = workflow.build_graph().get_state({"configurable": {"thread_id": body["thread_id"]}}).values
+        assert state["recent_tracks"] == [{"rank": 1, "track_id": "1", "title": "test", "artist": "test"}]
 
         monkeypatch.setattr(service, "recommend_scene", lambda *_args: [])
         body["request_id"] = str(uuid4())
@@ -131,6 +133,8 @@ def test_real_stream_searches_after_scene_and_reports_failure(monkeypatch):
         assert "event: error" in response.text
         assert "event: done" not in response.text
         assert "private database details" not in response.text
+        state = workflow.build_graph().get_state({"configurable": {"thread_id": body["thread_id"]}}).values
+        assert state["shown_track_ids"] == ["1"]
 
 
 def test_photo_graph_reuses_search_and_context_for_next_text(monkeypatch):
@@ -150,6 +154,8 @@ def test_photo_graph_reuses_search_and_context_for_next_text(monkeypatch):
     initial = {"messages": ["사진: 강변"], "recommend_query": "잔잔한 음악",
                "recommend_genres": None, "recommend_min_year": None, "recommend_max_year": None}
     assert workflow.build_graph(photo=True).invoke(initial, config=config)["tracks"] == [track]
+    # 검색만으로는 표시 이력이 되지 않고, 카드 전송 시점에 기록한다.
+    workflow.record_shown_tracks(thread, [track.model_dump()])
     seen = []
 
     def classify(_client, messages):
@@ -158,7 +164,9 @@ def test_photo_graph_reuses_search_and_context_for_next_text(monkeypatch):
 
     monkeypatch.setattr(nodes, "classify", classify)
     workflow.build_graph().invoke({"message": "더 신나게", "messages": ["더 신나게"]}, config=config)
-    assert seen == ["사진: 강변", "더 신나게"]
+    assert seen[0] == "사진: 강변"
+    assert '"rank": 1, "track_id": "1", "title": "test", "artist": "test"' in seen[1]
+    assert seen[2] == "더 신나게"
     workflow.build_graph(photo=True).invoke(initial, config=config)
     assert calls == [set(), {1}]
 
@@ -174,6 +182,20 @@ def test_photo_search_needs_no_text_llm_settings(monkeypatch):
     result = service.recommend_scene(scene(), str(uuid4()))
     assert result == [track.model_dump()]
     assert "reason" not in result[0]
+
+
+def test_photo_resets_previous_text_count(monkeypatch):
+    """의도 분류를 생략하는 사진 검색에서도 이전 텍스트의 곡 수를 초기화한다."""
+    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
+    counts = []
+    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **kwargs: counts.append(kwargs["k"]) or [])
+    monkeypatch.setattr(nodes, "classify", lambda *_args: {"intent": "guide", "requested_count": 2})
+    thread = str(uuid4())
+    workflow.build_graph().invoke({"messages": ["노래 2곡"]}, config={
+        "configurable": {"thread_id": thread, "client": object()}})
+    service.recommend_scene(scene(), thread)
+    assert counts == [5]
 
 
 def post_photo(client, body, data=None, mime="image/jpeg"):
@@ -337,17 +359,3 @@ def test_stream_closed_before_analysis_is_logged_as_aborted(monkeypatch, caplog)
     asyncio.run(first_event_then_close())
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:"))
     assert "provider=None outcome=aborted" in line
-
-
-def test_photo_resets_previous_text_count(monkeypatch):
-    """의도 분류를 생략하는 사진 검색에서도 이전 텍스트의 곡 수를 초기화한다."""
-    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
-    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
-    counts = []
-    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **kwargs: counts.append(kwargs["k"]) or [])
-    monkeypatch.setattr(nodes, "classify", lambda *_args: {"intent": "guide", "requested_count": 2})
-    thread = str(uuid4())
-    workflow.build_graph().invoke({"messages": ["노래 2곡"]}, config={
-        "configurable": {"thread_id": thread, "client": object()}})
-    service.recommend_scene(scene(), thread)
-    assert counts == [5]

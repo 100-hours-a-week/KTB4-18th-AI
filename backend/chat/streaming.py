@@ -7,6 +7,7 @@ from typing import Any
 from openai import OpenAI
 from db.types import Track
 from backend.chat.schemas import UserContext
+from backend.chat.graph.workflow import record_shown_tracks
 from backend.chat.answer import (
     AnswerHints, answer_input, answer_instructions, count_notice,
     lookup_answer_input, lookup_answer_instructions,
@@ -27,6 +28,8 @@ def stream_answer(
     tracks: list[Track],
     user_context: UserContext | None,
     hints: AnswerHints | None = None,
+    *,
+    thread_id: str | None = None,
 ) -> Iterator[str]:
     """추천 문장 조각과 완성된 추천곡을 순서대로 전송한다."""
 
@@ -57,6 +60,8 @@ def stream_answer(
                     if notice:
                         yield sse("text", {"delta": "\n\n" + notice})
                     cards = [track.model_dump() for track in tracks]
+                    if thread_id:
+                        record_shown_tracks(thread_id, cards)
                     yield sse(
                         "tracks",
                         {"tracks": cards},
@@ -85,6 +90,8 @@ def stream_lookup_answer(
     tracks: list[Track],
     user_context: UserContext | None,
     hints: AnswerHints | None = None,
+    *,
+    thread_id: str | None = None,
 ) -> Iterator[str]:
     """조회 결과 문장과 조회된 곡 카드를 순서대로 전송한다.
 
@@ -113,6 +120,8 @@ def stream_lookup_answer(
                     if notice:
                         yield sse("text", {"delta": "\n\n" + notice})
                     cards = [track.model_dump() for track in tracks]
+                    if thread_id:
+                        record_shown_tracks(thread_id, cards)
                     yield sse(
                         "tracks",
                         {"tracks": cards},

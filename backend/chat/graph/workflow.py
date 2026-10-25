@@ -16,8 +16,7 @@ from backend.chat.graph.state import RecommendationState
 
 # NOTE: 채팅방을 나가면 대화 기억도 사라져도 되는 요구사항(장기 저장 불필요)이라
 # DB 기반 checkpointer 대신 프로세스 메모리에만 저장하는 InMemorySaver를 쓴다.
-# 이 인스턴스와 컴파일된 그래프는 요청마다 새로 만들면 안 되고, 서버가 떠
-# 있는 동안 한 번만 만들어져 재사용돼야 thread_id별 기억이 실제로 유지된다.
+# 그래프를 다시 구성해도 thread_id별 기억이 이어지도록 이 저장소 인스턴스는 공유한다.
 # NOTE: InMemorySaver는 프로세스 메모리라서, 서버가 여러 워커/인스턴스로 뜨면
 # 같은 thread_id 요청이 다른 프로세스로 갈 수 있어 기억이 안 보일 수 있다.
 # 지금 규모에선 괜찮지만 배포 구조가 바뀌면(워커 여러 개, 여러 대) 재검토할 것.
@@ -68,3 +67,20 @@ def build_graph(*, photo: bool = False):
     graph.add_edge("lookup", END)
 
     return graph.compile(checkpointer=_checkpointer)
+
+
+def record_shown_tracks(thread_id: str, tracks: list[dict]) -> None:
+    """검색 성공이 아니라 SSE 카드 전송 시점에 최근 목록과 중복 제외 ID를 저장한다."""
+    if not tracks:
+        return
+    build_graph().update_state(
+        {"configurable": {"thread_id": thread_id}},
+        {"shown_track_ids": [track["track_id"] for track in tracks],
+         "recent_tracks": [
+             {"rank": rank, "track_id": track["track_id"],
+              "title": track["title"], "artist": track["artist"]}
+             for rank, track in enumerate(tracks, start=1)
+         ]},
+        # 검색·조회 모두 종료된 상태를 갱신하며 후속 노드를 예약하지 않는다.
+        as_node="search",
+    )
