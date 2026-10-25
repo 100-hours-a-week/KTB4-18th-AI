@@ -1,6 +1,7 @@
 """Search preserves candidate order, duplicate removal, filters, and response fields."""
 
 from types import SimpleNamespace
+import pytest
 
 
 def test_search_result_and_filters_without_database(monkeypatch):
@@ -37,8 +38,9 @@ def _row(track_id):
                            store_url="https://example.com/song", mood_tags={})
 
 
-def test_search_fills_without_genre_when_genre_results_are_short(monkeypatch):
-    """장르 필터 결과가 k곡보다 적으면, 장르만 빼고(연도는 유지) 다시 찾아 뒤에 채운다."""
+@pytest.mark.parametrize("space", ["gemini", "v4"])
+def test_search_preserves_genre_when_results_are_short(monkeypatch, space):
+    """개수가 부족해도 장르·연도 조건 밖 곡으로 채우지 않는다."""
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
     from db.search import search
 
@@ -55,12 +57,13 @@ def test_search_fills_without_genre_when_genre_results_are_short(monkeypatch):
             return SimpleNamespace(all=lambda: rows)
 
     session = Session()
-    tracks = search(session, [1.0] * 3072, genres=["Singer/Songwriter"], max_year=2014)
+    tracks = search(session, [1.0] * (3073 if space == "v4" else 3072),
+                    genres=["Singer/Songwriter"], max_year=2014, space=space)
 
-    assert [track.track_id for track in tracks] == ["1", "2", "3", "4", "5"]
-    first, second = (str(stmt) for stmt in session.statements)
-    assert "genre IN" in first and "genre IN" not in second
-    assert "release_date <=" in first and "release_date <=" in second
+    assert [track.track_id for track in tracks] == ["1"]
+    assert len(session.statements) == 1
+    sql = str(session.statements[0])
+    assert "genre IN" in sql and "release_date <=" in sql
 
 
 def test_search_does_not_requery_when_genre_results_are_enough(monkeypatch):

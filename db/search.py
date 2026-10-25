@@ -65,42 +65,31 @@ def search(
     else:
         dist = column.cosine_distance(l2norm(np.asarray(qvec, dtype=np.float32)))
 
-    def candidates(genre_filter: list[str] | None) -> list[Hit]:
-        stmt = (
-            select(TrackRow, dist.label("dist"))
-            # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
-            # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
-            # 채워질 때까지 검색 대상에서 뺀다.
-            # 검색 칸이 NULL인 곡(아직 임베딩·v4 계산이 안 된 대기열)은 검색 대상에서 뺀다.
-            .where(column.isnot(None), TrackRow.store_url.isnot(None))
-            .order_by(dist)
-            .limit(n)
-        )
-        if exclude_ids:
-            stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
-        if min_year:
-            stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
-        if max_year:
-            stmt = stmt.where(TrackRow.release_date <= date(max_year, 12, 31))
-        if genre_filter:
-            stmt = stmt.where(TrackRow.genre.in_(genre_filter))
-        # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지. v4는 음의 내적이라 부호만 뒤집는다
-        rows = session.execute(stmt).all()
-        if space == "v4":
-            return [Hit(track=r[0], score=-float(r[1])) for r in rows]
-        return [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
-
-    hits = _dedup(candidates(genres), k)
-
-    # NOTE: 장르(genre 칸, 예: "Singer/Songwriter"는 iTunes 장르명)는 LLM이 "발라드"처럼
-    # 목록에 없는 표현을 가장 비슷해 보이는 장르로 추측해 고르기도 하고, 정당한 장르여도
-    # 연도 등 다른 조건과 겹치면 후보가 거의 안 남는다(2014년 이전 + Singer/Songwriter = 1곡).
-    # k곡이 안 되면 장르만 빼고 다시 찾아 남은 자리를 채운다. 장르가 맞는 곡이 앞에 오고,
-    # 사용자가 직접 말한 연도 조건은 풀지 않는다.
-    if genres and len(hits) < k:
-        picked = {hit.track.track_id for hit in hits}
-        extra = [hit for hit in candidates(None) if hit.track.track_id not in picked]
-        hits = _dedup(hits + extra, k)
+    stmt = (
+        select(TrackRow, dist.label("dist"))
+        # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
+        # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
+        # 채워질 때까지 검색 대상에서 뺀다.
+        # 검색 칸이 NULL인 곡(아직 임베딩·v4 계산이 안 된 대기열)은 검색 대상에서 뺀다.
+        .where(column.isnot(None), TrackRow.store_url.isnot(None))
+        .order_by(dist)
+        .limit(n)
+    )
+    if exclude_ids:
+        stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
+    if min_year:
+        stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
+    if max_year:
+        stmt = stmt.where(TrackRow.release_date <= date(max_year, 12, 31))
+    if genres:
+        stmt = stmt.where(TrackRow.genre.in_(genres))
+    # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지. v4는 음의 내적이라 부호만 뒤집는다
+    rows = session.execute(stmt).all()
+    if space == "v4":
+        hits = [Hit(track=r[0], score=-float(r[1])) for r in rows]
+    else:
+        hits = [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
+    hits = _dedup(hits, k)
 
     tracks = [
         Track(
