@@ -24,6 +24,14 @@ dev = [
     "pytest>=9.1.1",
 ]
 
+# V3 위치 추천 실험: 한국 OSM 파일에서 지형을 추출하고(osmium) 거리를 잰다(shapely).
+# 로컬 실험 전용이라 서버 이미지에는 넣지 않는다. 서비스에 넣을 방식(PostGIS 등)은 실험 결과를 보고 정한다.
+# 설치: uv sync --group location-exp
+location-exp = [
+    "osmium>=4.3.2",
+    "shapely>=2.2.0",
+]
+
 # gemini-embedding-2로 전환하며 CLAP(laion-clap·torch·torchvision)은 완전히 제거했다.
 # EffNet 무드 태그 추출은 로컬에서만 돌리고 결과만 Postgres로 옮기는 방식이라
 # AWS 서버 이미지에는 넣지 않는다.
