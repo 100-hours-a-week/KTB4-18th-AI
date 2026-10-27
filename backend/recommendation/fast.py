@@ -108,8 +108,8 @@ def year_questions() -> dict:
     "2000년 이전"(→1990s, 그 전이 빠짐)처럼 구간으로 표현 못 하는 요청이 eval 연도 문장 10개 중
     4개였다. 연도별 선택지는 50개 정도라 Choice(최대 255개)에 들어간다.
     NOTE: Jev는 올해가 몇 년인지 몰라서 classify 프롬프트처럼 직접 알려준다.
-    NOTE: 초반·중반·후반 예시가 없을 땐 "90년대 후반"을 1990~1999로 뭉개거나, "2010년대 후반"을
-    2017로 고르고도 확신이 0.34라 기준에서 버려졌다(15번 중 0번 성공). 그래서 예시를 넣었다.
+    NOTE: "N년대 초반·중반·후반", "N년 전후·쯤"은 여기서 예시로 풀지 않고 pattern_year_range()가
+    코드로 정한다.
     """
 
     this_year = date.today().year
@@ -118,20 +118,66 @@ def year_questions() -> dict:
         "year_from": {
             "type": "choice",
             "instructions": f"음악 외 요청 부분은 무시하고, 사용자가 원하는 노래 발매연도의 시작(이 해부터). "
-                            f"올해는 {this_year}년. 예: '1990년대'→1990, '2010년대 초반'→2010, "
-                            f"'2010년대 중반'→2014, '2010년대 후반·말'→2017, '2020년 이후'→2020, "
+                            f"올해는 {this_year}년. 예: '1990년대'→1990, '2020년 이후'→2020, "
                             f"'최신곡·요즘 나온 노래'→{this_year - 1}, '2015년 이전'→none",
             "criteria": {"none": "시작 연도 조건 없음", **years},
         },
         "year_to": {
             "type": "choice",
             "instructions": f"음악 외 요청 부분은 무시하고, 사용자가 원하는 노래 발매연도의 끝(이 해까지). "
-                            f"올해는 {this_year}년. 예: '1990년대'→1999, '2010년대 초반'→2013, "
-                            f"'2010년대 중반'→2016, '2010년대 후반·말'→2019, '2015년 이전'→2014, "
+                            f"올해는 {this_year}년. 예: '1990년대'→1999, '2015년 이전'→2014, "
                             f"'2020년 이후'→none, '최신곡'→none",
             "criteria": {"none": "끝 연도 조건 없음", **years},
         },
     }
+
+
+# NOTE: 아래 두 패턴은 규칙이 명확해서 Jev 대신 코드로 연도를 정한다.
+# - "N년대 초반·중반·후반": Jev가 예시로 준 연대("2010년대 후반"→2017~2019)만 맞히고 다른
+#   연대("90년대 후반", "2000년대 말")는 연대 전체로 뭉갰다.
+# - "N년 전후·쯤": Jev가 끝 연도 확신을 기준(0.5) 근처로 내서, 3번 중 1번은 끝이 버려져
+#   "N년 이후 전부"가 됐다. 앞뒤 2년으로 정한다.
+# NOTE: 긴 표현이 먼저 걸리도록 "초중반"을 "초반"보다, "말기"를 "말"보다 앞에 둔다.
+DECADE_PART = re.compile(r"(\d{2,4})년대\s*(초중반|중후반|초반|중반|후반|말기|막바지|끝자락|말|초)")
+DECADE_PART_YEARS = {
+    "초중반": (0, 6), "중후반": (4, 9), "초반": (0, 3), "초": (0, 3), "중반": (4, 6),
+    "후반": (7, 9), "말기": (7, 9), "막바지": (7, 9), "끝자락": (7, 9), "말": (7, 9),
+}
+AROUND_YEAR = re.compile(r"(\d{4})년\s*(전후|쯤|즈음|무렵|경)")
+AROUND_YEARS = 2
+# NOTE: "2010년대 후반부터 2022년까지"처럼 연도가 여럿이면 패턴 하나로 정하면 나머지 조건이
+# 무시되므로, 연도 숫자가 2개 이상이면 코드로 정하지 않고 Jev에 맡긴다.
+YEAR_MENTION = re.compile(r"\d{2,4}년")
+
+
+def pattern_year_range(message: str) -> tuple[int, int] | None:
+    """메시지의 "N년대 초반·중반·후반" 또는 "N년 전후·쯤"을 연도 범위로 바꾼다. 없으면 None."""
+
+    if len(YEAR_MENTION.findall(message)) != 1:
+        return None
+
+    found = DECADE_PART.search(message)
+    if found:
+        digits, part = found.groups()
+        decade = int(digits)
+        # "90년대"→1990, "00년대"→2000, "10년대"→2010
+        if decade < 100:
+            decade += 1900 if decade >= 30 else 2000
+        first, last = DECADE_PART_YEARS[part]
+        return decade + first, decade + last
+
+    found = AROUND_YEAR.search(message)
+    if found:
+        year = int(found.group(1))
+        return year - AROUND_YEARS, year + AROUND_YEARS
+
+    return None
+
+
+def resolve_years(message: str, answers: dict) -> tuple[int | None, int | None]:
+    """발매연도 필터: 메시지에 코드로 정할 패턴이 있으면 그 범위, 없으면 Jev 답."""
+
+    return pattern_year_range(message) or year_range(answers)
 
 
 def year_range(answers: dict) -> tuple[int | None, int | None]:
@@ -139,6 +185,8 @@ def year_range(answers: dict) -> tuple[int | None, int | None]:
 
     한쪽이 none이거나 자신 없으면 그쪽은 조건 없음(None)으로 두고, 시작이 끝보다 늦으면
     잘못 고른 것이라 둘 다 버린다.
+    NOTE: "최근 3년"을 Jev가 2023~2026으로도, 2023~none으로도 고른다. 올해까지는 끝이 없는
+    것과 같아서 None으로 맞춘다(classify의 "최신곡"→작년/null과도 같은 모양).
     """
 
     def pick(answer: dict) -> int | None:
@@ -149,6 +197,8 @@ def year_range(answers: dict) -> tuple[int | None, int | None]:
     start, end = pick(answers["year_from"]), pick(answers["year_to"])
     if start and end and start > end:
         return None, None
+    if end == date.today().year:
+        end = None
     return start, end
 
 

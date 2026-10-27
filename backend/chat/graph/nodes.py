@@ -10,8 +10,8 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
-    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, resolve_intent, year_questions,
-    year_range,
+    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, resolve_intent, resolve_years,
+    year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -75,7 +75,7 @@ def jev_node(state: RecommendationState) -> dict:
     except JevUnavailable:
         return {"jev_failed": True}
 
-    min_year, max_year = year_range(answers)
+    min_year, max_year = resolve_years(state["message"], answers)
     result = {
         "jev_failed": False,
         "intent": intent,
