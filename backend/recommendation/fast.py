@@ -72,7 +72,8 @@ def artist_question() -> dict:
 
     return {
         "type": "choice",
-        "instructions": "이번 메시지가 가리키는 아티스트. 한글 이름이면 같은 아티스트의 영문 표기를 고른다.",
+        "instructions": "음악 외 요청 부분(다른 주제로 언급된 사람 등)은 무시하고, 이번 메시지가 노래를 찾는 "
+                        "대상으로 가리키는 아티스트. 한글 이름이면 같은 아티스트의 영문 표기를 고른다.",
         "criteria": {**{a: a for a in known_seed_artists()},
                      "none": "특정 아티스트를 말하지 않았거나 목록에 없음"},
     }

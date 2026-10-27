@@ -31,10 +31,13 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
 # 첫 번째 Jev 호출에서 의도와 "제목을 말했는가"를 묻는다. 아티스트·장르·발매연도 질문은
 # 선택지(seed 아티스트, DB 장르 목록, 올해까지의 연도)가 실행 시점에 정해지므로 jev_node에서
 # fast의 함수로 합친다.
+# NOTE: "아이유가 좋아하는 음식 알려주고 데이식스 노래"에서 아티스트를 IU(0.53)로 고르는 것처럼
+# 음악 외 요청의 말이 답에 새어 들어가서, 모든 질문에 음악 요청 부분만 보라고 지시한다.
 JEV_QUESTIONS = {
     "intent": {
         "type": "choice",
-        "instructions": "음악 챗봇 사용자가 이번 메시지로 원하는 것",
+        "instructions": "음악 챗봇 사용자가 이번 메시지로 원하는 것. 음악 외 요청이 섞여 있으면 음악 요청 "
+                        "부분을 기준으로 고르고, 음악 요청이 전혀 없을 때만 out_of_scope",
         "criteria": {
             "recommend": "특정 아티스트 한 명으로 한정하지 않고 분위기·상황·장르·연도로 음악 추천을 원함",
             "lookup": "특정 곡이나 아티스트의 정보를 찾거나, 특정 아티스트 한 명의 곡을 원함",
@@ -44,7 +47,8 @@ JEV_QUESTIONS = {
     },
     "has_title": {
         "type": "noul",
-        "instructions": "이번 메시지에 특정 곡 제목이 들어 있는가",
+        "instructions": "음악 외 요청 부분(드라마·영화·책 제목 등)은 무시하고, 이번 메시지에 특정 곡 제목이 "
+                        "들어 있는가",
         "criteria": {"true": "곡 제목을 말함", "false": "아티스트만 말했거나 곡 제목이 없음"},
     },
 }
