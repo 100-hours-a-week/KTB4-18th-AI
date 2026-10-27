@@ -25,12 +25,13 @@ def test_thread_messages_survive_graph_rebuild(monkeypatch):
 def test_fast_mode_switches_entry_to_jev(monkeypatch):
     classify_calls, jev_calls, embedded, searched = [], [], [], []
 
-    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year_from, year_to)
+    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year_from, year_to, continues)
     jev_answers = {
-        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990", "1999"),
-        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none"),
-        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none", "none"),
-        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none"),
+        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990", "1999", "new"),
+        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none", "new"),
+        "좀 더 신나게": ("recommend", "none", 0.9, 0.0, "none", "none", "none", "continue"),
+        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none", "none", "new"),
+        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none", "new"),
     }
 
     def classify(_client, messages):
@@ -43,11 +44,12 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         # jev_state가 마지막 줄을 "이번 메시지(판단 대상): ..."로 만든다.
         message = state[-1].split(": ", 1)[1]
         jev_calls.append(message)
-        intent, artist, confidence, has_title, genre, year_from, year_to = jev_answers[message]
+        intent, artist, confidence, has_title, genre, year_from, year_to, continues = jev_answers[message]
         return {"intent": {"choice": intent}, "artist": {"choice": artist, "confidence": confidence},
                 "has_title": {"noul": has_title}, "genre": {"choice": genre, "confidence": 0.9},
                 "year_from": {"choice": year_from, "confidence": 0.9},
-                "year_to": {"choice": year_to, "confidence": 0.9}}
+                "year_to": {"choice": year_to, "confidence": 0.9},
+                "continues": {"choice": continues, "confidence": 0.9}}
 
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
@@ -78,6 +80,8 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     assert send("고속 모드 켜줘")["fast_mode"] is True
     assert send("90년대 잔잔한 힙합")["intent"] == "recommend"
     assert send("오늘 점심 뭐 먹지")["intent"] == "out_of_scope"
+    # 이어받기는 지난 검색 문장에 누적한다. 사이에 낀 잡담 턴은 검색 문장을 바꾸지 않는다.
+    assert send("좀 더 신나게")["recommend_query"] == "90년대 잔잔한 힙합 좀 더 신나게"
     # 아티스트만 말한 조회는 classify 없이 Jev가 고른 아티스트로 바로 찾는다.
     artist_only = send("악뮤 노래")
     assert artist_only["lookup_status"] == "found"
@@ -89,10 +93,10 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     assert looked_up["fast_mode"] is True
 
     assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘"]
-    assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "악뮤 노래", "그 노래 찾아줘"]
+    assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘"]
     # 고속 모드 전 classify가 남긴 장르(Pop) 대신 Jev가 고른 장르·연도로 검색한다.
-    assert embedded == ["90년대 잔잔한 힙합"]
-    assert searched == [(["Hip-Hop"], 1990, 1999)]
+    assert embedded == ["90년대 잔잔한 힙합", "90년대 잔잔한 힙합 좀 더 신나게"]
+    assert searched == [(["Hip-Hop"], 1990, 1999), (None, None, None)]
 
 
 def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):

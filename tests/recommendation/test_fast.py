@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from backend.recommendation.fast import pattern_year_range, resolve_years, year_range
+from backend.recommendation.fast import next_search_parts, pattern_year_range, resolve_years, year_range
 
 
 @pytest.mark.parametrize(
@@ -54,6 +54,31 @@ def test_around_year(message, expected):
 )
 def test_no_pattern(message):
     assert pattern_year_range(message) is None
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        ("new", ["조금 더 밝게"]),
+        ("continue", ["카페에서 공부할 때 들을 노래", "좀 더 잔잔하게", "조금 더 밝게"]),
+        ("repeat", ["카페에서 공부할 때 들을 노래", "좀 더 잔잔하게"]),
+    ],
+)
+def test_next_search_parts(choice, expected):
+    previous = ["카페에서 공부할 때 들을 노래", "좀 더 잔잔하게"]
+    answers = {"continues": {"choice": choice, "confidence": 0.9}}
+    assert next_search_parts(previous, "조금 더 밝게", answers) == expected
+
+
+def test_next_search_parts_keeps_recent_messages_only():
+    previous = ["새벽 감성 노래", "좀 더 신나게", "힙합으로"]
+    answers = {"continues": {"choice": "continue", "confidence": 0.9}}
+    assert next_search_parts(previous, "조금 덜 시끄럽게", answers) == ["좀 더 신나게", "힙합으로", "조금 덜 시끄럽게"]
+
+
+def test_next_search_parts_without_previous_starts_new():
+    answers = {"continues": {"choice": "repeat", "confidence": 0.9}}
+    assert next_search_parts([], "하나 더 줘", answers) == ["하나 더 줘"]
 
 
 def test_year_range_treats_this_year_as_open_end():

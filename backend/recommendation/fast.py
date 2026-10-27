@@ -203,6 +203,31 @@ def year_range(answers: dict) -> tuple[int | None, int | None]:
     return start, end
 
 
+# NOTE: 이어받기가 계속되면 검색 문장이 계속 길어져 이번 요청의 비중이 줄고 임베딩이 흐려지므로,
+# 최근 메시지 3개까지만 이어 붙인다.
+SEARCH_PARTS_MAX = 3
+
+
+def next_search_parts(previous_parts: list[str], message: str, answers: dict) -> list[str]:
+    """이번 추천 턴의 검색 문장을 이룰 메시지 목록. " ".join한 것이 recommend_query가 된다.
+
+    - new: 이번 메시지만
+    - continue: 지난 목록 + 이번 메시지. 지난 목록에 이미 앞 턴들의 맥락이 들어 있어서
+      "카페 공부 → 좀 더 잔잔하게 → 조금 더 밝게"도 세 턴 맥락이 다 들어간다.
+    - repeat: 지난 목록 그대로. 이미 보여준 곡은 shown_track_ids로 빠지므로 같은 조건의 다른 곡이 나온다.
+
+    NOTE: "다른 곡으로 더 줘"를 이어 붙이면 그 문구가 임베딩을 흔들어 classify 재작성 결과와
+    0/5곡 겹쳤다(빼면 5/5). 그래서 재요청은 문구를 붙이지 않는다.
+    """
+
+    choice = answers["continues"]["choice"]
+    if not previous_parts or choice == "new":
+        return [message]
+    if choice == "repeat":
+        return previous_parts
+    return (previous_parts + [message])[-SEARCH_PARTS_MAX:]
+
+
 def resolve_intent(answers: dict) -> str:
     """Jev intent를 그대로 쓰되, 아티스트를 확신하거나 제목을 말한 게 분명하면 조회로 본다."""
 

@@ -27,6 +27,8 @@ class RecommendationState(TypedDict, total=False):
     fast_mode: bool
     # jev_node가 Jev 호출에 실패하면 True. route_by_jev가 보고 그 턴만 classify로 보낸다.
     jev_failed: bool
+    # 고속 모드 검색 문장(recommend_query)을 이루는 메시지들. 추천 턴에서만 jev_node가 갱신한다.
+    search_parts: list[str]
 
     # ── classify_node(고속 모드에선 jev_node)가 채움 ──
     intent: str

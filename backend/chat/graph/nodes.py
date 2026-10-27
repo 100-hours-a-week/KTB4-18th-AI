@@ -10,8 +10,8 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
-    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, resolve_intent, resolve_years,
-    year_questions,
+    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, next_search_parts, resolve_intent,
+    resolve_years, year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -51,6 +51,21 @@ JEV_QUESTIONS = {
                         "들어 있는가",
         "criteria": {"true": "곡 제목을 말함", "false": "아티스트만 말했거나 곡 제목이 없음"},
     },
+    # NOTE: classify는 "좀 더 신나게"를 이전 대화와 합쳐 "비 오는 날 듣기 좋은 신나는 노래"로 다시
+    # 써주지만 Jev는 문장을 만들 수 없다. 대신 지난 추천 요청과의 관계를 고르게 하고, 지난 검색
+    # 문장에 이번 메시지를 이어 붙여 임베딩한다(fast.next_search_parts).
+    # NOTE: 처음엔 "몇 개 앞 메시지부터"(0/1/2)를 골랐는데, 두 개 앞 판단은 확신이 0.27~0.53으로
+    # 낮았고 중간에 낀 잡담까지 같이 붙었다. 지난 검색 문장에 누적하면 이 판단이 필요 없다.
+    "continues": {
+        "type": "choice",
+        "instructions": "이번 메시지가 이전 대화의 노래 추천 요청과 어떤 관계인가. 이전 메시지가 모드 전환·"
+                        "잡담처럼 노래 조건과 무관하면 그 메시지는 관계 판단에서 빼고 본다",
+        "criteria": {
+            "new": "이번 메시지만으로 원하는 노래를 알 수 있는 새 요청(주제가 바뀐 경우 포함)",
+            "continue": "이전 추천 요청의 분위기·상황을 이어받아 조건을 더하거나 바꿈(예: '좀 더 신나게', '힙합으로')",
+            "repeat": "새 조건 없이 같은 조건으로 다시 달라는 요청(예: '다른 곡으로 더 줘', '하나 더')",
+        },
+    },
 }
 
 
@@ -59,11 +74,10 @@ def jev_node(state: RecommendationState) -> dict:
 
     조회 곡을 못 찾으면(lookup_status=None) route_by_jev가 그 턴만 classify로 보낸다.
 
-    NOTE: LLM이 대화 맥락을 합쳐 재구성해주던 recommend_query가 없어서 이번 턴
-    원문을 그대로 검색에 쓴다. 장르·연도 필터는 Jev 답으로 채우고, 추천 조건 판정과
-    조회 상태는 이전 턴 값이 checkpointer에 남아 있으면 새어 들어가므로 매번 덮어쓴다.
-    TODO: "좀 더 신나게" 같은 후속 요청은 원문만으론 맥락이 빠진다. 이전 쿼리와
-    이어 붙여 임베딩하는 방식을 eval로 확인할 것.
+    NOTE: LLM이 대화 맥락을 합쳐 재구성해주던 recommend_query 대신, 지난 검색 문장에 이번
+    메시지를 이어 붙인 문장을 검색에 쓴다(추천 턴에서만 갱신해서 잡담·조회 턴은 맥락에 안 섞인다).
+    장르·연도 필터도 Jev 답으로 채우고, 추천 조건 판정과 조회 상태는 이전 턴 값이 checkpointer에
+    남아 있으면 새어 들어가므로 매번 덮어쓴다.
     """
 
     messages = state["messages"]
@@ -86,11 +100,19 @@ def jev_node(state: RecommendationState) -> dict:
         "lookup_status": None,
         "recommend_has_enough_info": True,
         "recommend_unsupported_condition": False,
-        "recommend_query": state["message"],
         "recommend_genres": genre_filter(answers["genre"]),
         "recommend_min_year": min_year,
         "recommend_max_year": max_year,
     }
+    if intent == "recommend":
+        # NOTE: 지난 턴을 classify가 처리했으면(고속 모드 전, Jev 폴백) search_parts가 없거나 낡았다.
+        # 그럴 땐 classify가 쓴 검색 문장(이 시점엔 아직 덮어쓰기 전인 recommend_query)을 출발점으로 삼는다.
+        previous_parts = state.get("search_parts") or []
+        previous_query = state.get("recommend_query")
+        if previous_query and " ".join(previous_parts) != previous_query:
+            previous_parts = [previous_query]
+        parts = next_search_parts(previous_parts, state["message"], answers)
+        result |= {"search_parts": parts, "recommend_query": " ".join(parts)}
     if rows:
         tracks = [
             Track(
