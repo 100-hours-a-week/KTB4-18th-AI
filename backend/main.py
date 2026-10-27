@@ -16,6 +16,7 @@ from backend.chat.photo.router import router as photo_router
 from backend.core.config import PROJECT_ROOT
 from backend.health.router import router as health_router
 from backend.http.errors import http_error_handler, validation_error_handler
+from backend.location.router import router as location_router
 from backend.stt.router import router as stt_router
 
 # ===== 애플리케이션 설정 =====
@@ -27,6 +28,7 @@ app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(photo_router)
 app.include_router(stt_router)
+app.include_router(location_router)
 # ===== API 오류 처리 =====
 app.add_exception_handler(RequestValidationError, cast(ExceptionHandler, validation_error_handler))
 app.add_exception_handler(HTTPException, cast(ExceptionHandler, http_error_handler))
