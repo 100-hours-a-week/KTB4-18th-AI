@@ -10,8 +10,8 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
-    artist_question, find_lookup_rows, genre_filter, genre_question, jev_state, next_search_parts, resolve_intent,
-    resolve_years, year_questions,
+    artist_question, candidate_parts, embed_candidates, find_lookup_rows, genre_filter, genre_question, jev_state,
+    resolve_intent, resolve_years, year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -83,6 +83,18 @@ def jev_node(state: RecommendationState) -> dict:
     messages = state["messages"]
     shown_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
 
+    # NOTE: 지난 턴을 classify가 처리했으면(고속 모드 전, Jev 폴백) search_parts가 없거나 낡았다.
+    # 그럴 땐 classify가 쓴 검색 문장(이 시점엔 아직 덮어쓰기 전인 recommend_query)을 출발점으로 삼는다.
+    previous_parts = state.get("search_parts") or []
+    previous_query = state.get("recommend_query")
+    if previous_query and " ".join(previous_parts) != previous_query:
+        previous_parts = [previous_query]
+    candidates = candidate_parts(previous_parts, state["message"])
+
+    # NOTE: 후보 검색 문장 임베딩을 먼저 출발시켜 두고 Jev를 부른다. 둘이 동시에 진행돼서
+    # 추천 턴의 대기가 "Jev + 임베딩"에서 "둘 중 긴 쪽"으로 줄어든다.
+    vectors = embed_candidates(candidates)
+
     # NOTE: Jev가 실패해도 사용자에게 오류를 보이지 않고, 그 턴만 classify(LLM)로 처리한다.
     try:
         questions = {**JEV_QUESTIONS, "artist": artist_question(), "genre": genre_question(),
@@ -105,14 +117,10 @@ def jev_node(state: RecommendationState) -> dict:
         "recommend_max_year": max_year,
     }
     if intent == "recommend":
-        # NOTE: 지난 턴을 classify가 처리했으면(고속 모드 전, Jev 폴백) search_parts가 없거나 낡았다.
-        # 그럴 땐 classify가 쓴 검색 문장(이 시점엔 아직 덮어쓰기 전인 recommend_query)을 출발점으로 삼는다.
-        previous_parts = state.get("search_parts") or []
-        previous_query = state.get("recommend_query")
-        if previous_query and " ".join(previous_parts) != previous_query:
-            previous_parts = [previous_query]
-        parts = next_search_parts(previous_parts, state["message"], answers)
-        result |= {"search_parts": parts, "recommend_query": " ".join(parts)}
+        parts = candidates[answers["continues"]["choice"]]
+        query = " ".join(parts)
+        # NOTE: 벡터를 여기서 채우므로 route_by_jev는 embed를 건너뛰고 바로 search로 간다.
+        result |= {"search_parts": parts, "recommend_query": query, "query_vector": vectors[query].result()}
     if rows:
         tracks = [
             Track(

@@ -54,18 +54,19 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
 
+    # 가짜 벡터에 문장을 그대로 담아, 검색에 어떤 후보 문장의 벡터가 쓰였는지 확인한다.
     def embed_query(_client, text):
         embedded.append(text)
-        return [0.0]
+        return [text]
 
-    def vector_recommendation(_vector, **kwargs):
-        searched.append((kwargs["genres"], kwargs["min_year"], kwargs["max_year"]))
+    def vector_recommendation(vector, **kwargs):
+        searched.append((vector[0], kwargs["genres"], kwargs["min_year"], kwargs["max_year"]))
         return []
 
     monkeypatch.setattr(nodes, "classify", classify)
     monkeypatch.setattr(nodes, "decide", decide)
-    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
-    monkeypatch.setattr(nodes, "embed_query", embed_query)
+    monkeypatch.setattr(fast, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(fast, "embed_query", embed_query)
     monkeypatch.setattr(nodes, "vector_recommendation", vector_recommendation)
     monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [])
     monkeypatch.setattr(nodes, "artist_question", lambda: {})
@@ -94,9 +95,14 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
 
     assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘"]
     assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘"]
-    # 고속 모드 전 classify가 남긴 장르(Pop) 대신 Jev가 고른 장르·연도로 검색한다.
-    assert embedded == ["90년대 잔잔한 힙합", "90년대 잔잔한 힙합 좀 더 신나게"]
-    assert searched == [(["Hip-Hop"], 1990, 1999), (None, None, None)]
+    # 임베딩은 Jev 답을 기다리지 않고 후보마다 미리 출발한다("좀 더 신나게" 턴은 new/continue/repeat 후보 3개).
+    assert {"좀 더 신나게", "90년대 잔잔한 힙합 좀 더 신나게", "90년대 잔잔한 힙합"} <= set(embedded)
+    # 검색에는 Jev 답에 맞는 후보의 벡터가 쓰인다. 장르·연도는 고속 모드 전 classify가 남긴
+    # 장르(Pop) 대신 Jev가 고른 값이다.
+    assert searched == [
+        ("90년대 잔잔한 힙합", ["Hip-Hop"], 1990, 1999),
+        ("90년대 잔잔한 힙합 좀 더 신나게", None, None, None),
+    ]
 
 
 def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
@@ -116,6 +122,8 @@ def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
     monkeypatch.setattr(nodes, "artist_question", lambda: {})
     monkeypatch.setattr(nodes, "genre_question", lambda: {})
     monkeypatch.setattr(nodes, "year_questions", lambda: {})
+    monkeypatch.setattr(fast, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(fast, "embed_query", lambda _client, text: [text])
     config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
 
     def send(message):

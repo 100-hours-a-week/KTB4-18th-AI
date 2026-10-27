@@ -8,9 +8,12 @@ Jev는 텍스트를 만들지 못해서, 조회는 "아티스트를 목록에서
 """
 
 import re
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date
 
 from backend.providers.jev import decide
+from backend.providers.openrouter import get_embedding_client
+from backend.recommendation.embedding import embed_query
 from backend.recommendation.intent import known_genres
 from backend.recommendation.retrieval import lookup_tracks_db, seed_artist_titles_db, seed_artists_db
 
@@ -208,24 +211,51 @@ def year_range(answers: dict) -> tuple[int | None, int | None]:
 SEARCH_PARTS_MAX = 3
 
 
-def next_search_parts(previous_parts: list[str], message: str, answers: dict) -> list[str]:
-    """이번 추천 턴의 검색 문장을 이룰 메시지 목록. " ".join한 것이 recommend_query가 된다.
+def candidate_parts(previous_parts: list[str], message: str) -> dict[str, list[str]]:
+    """Jev 이어받기 답(new/continue/repeat)별 검색 문장 메시지 목록. " ".join한 것이 recommend_query가 된다.
 
     - new: 이번 메시지만
     - continue: 지난 목록 + 이번 메시지. 지난 목록에 이미 앞 턴들의 맥락이 들어 있어서
       "카페 공부 → 좀 더 잔잔하게 → 조금 더 밝게"도 세 턴 맥락이 다 들어간다.
     - repeat: 지난 목록 그대로. 이미 보여준 곡은 shown_track_ids로 빠지므로 같은 조건의 다른 곡이 나온다.
+    지난 목록이 없으면(고속 모드 첫 추천) 셋 다 이번 메시지만이다.
 
     NOTE: "다른 곡으로 더 줘"를 이어 붙이면 그 문구가 임베딩을 흔들어 classify 재작성 결과와
     0/5곡 겹쳤다(빼면 5/5). 그래서 재요청은 문구를 붙이지 않는다.
+    NOTE: Jev 답을 기다리지 않고 임베딩을 미리 시작하려고(embed_candidates) 세 경우를 다 만든다.
     """
 
-    choice = answers["continues"]["choice"]
-    if not previous_parts or choice == "new":
-        return [message]
-    if choice == "repeat":
-        return previous_parts
-    return (previous_parts + [message])[-SEARCH_PARTS_MAX:]
+    if not previous_parts:
+        return {"new": [message], "continue": [message], "repeat": [message]}
+    return {
+        "new": [message],
+        "continue": (previous_parts + [message])[-SEARCH_PARTS_MAX:],
+        "repeat": previous_parts,
+    }
+
+
+def next_search_parts(previous_parts: list[str], message: str, answers: dict) -> list[str]:
+    """Jev 이어받기 답에 맞는 검색 문장 메시지 목록."""
+
+    return candidate_parts(previous_parts, message)[answers["continues"]["choice"]]
+
+
+# NOTE: 고속 추천에서 Jev(약 0.45초)를 기다렸다가 임베딩(1.3~1.7초)하면 둘을 더한 만큼 걸린다.
+# Jev 답을 모르는 채로 후보 문장을 미리 임베딩하면 둘 중 긴 쪽만큼만 걸린다. 둘 다 네트워크
+# 대기라 스레드로 동시에 보내면 된다. 추천이 아닌 턴이면 벡터는 버린다(임베딩 1회는 1원도 안 듦).
+# 요청마다 스레드를 새로 만들지 않도록 프로세스 동안 하나를 재사용한다.
+_embed_pool = ThreadPoolExecutor(max_workers=8)
+
+
+def embed_candidates(parts_by_choice: dict[str, list[str]]) -> dict[str, Future]:
+    """후보 검색 문장들을 백그라운드 스레드에서 임베딩하기 시작한다. 문장 → Future(벡터).
+
+    같은 문장은 한 번만 보낸다. .result()에서 임베딩 실패 예외(503)가 그대로 올라온다.
+    """
+
+    client = get_embedding_client()
+    queries = {" ".join(parts) for parts in parts_by_choice.values()}
+    return {query: _embed_pool.submit(embed_query, client, query) for query in queries}
 
 
 def resolve_intent(answers: dict) -> str:
