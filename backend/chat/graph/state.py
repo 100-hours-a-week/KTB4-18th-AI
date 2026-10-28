@@ -42,7 +42,10 @@ class RecommendationState(TypedDict, total=False):
 
     # ── search_node가 채움 ──
     tracks: list[Track]
+
+    # ── SSE 곡 카드 전송 시 갱신 ──
     shown_track_ids: Annotated[list[str], _cap_shown_ids]
+    recent_tracks: list[dict]
 
     # ── lookup_node가 채움 ──
     lookup_status: str  # "found" | "ambiguous" | "not_found"

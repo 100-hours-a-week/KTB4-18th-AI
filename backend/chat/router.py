@@ -47,13 +47,15 @@ def chat(body: ChatRequest) -> StreamingResponse:
 
     if result.kind == "lookup":
         return StreamingResponse(
-            stream_lookup_answer(result.client, result.query, result.tracks, body.user_context, result.hints),
+            stream_lookup_answer(result.client, result.query, result.tracks, body.user_context, result.hints,
+                                 thread_id=str(body.thread_id)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     return StreamingResponse(
-        stream_answer(result.client, result.query, result.tracks, body.user_context, result.hints),
+        stream_answer(result.client, result.query, result.tracks, body.user_context, result.hints,
+                      thread_id=str(body.thread_id)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

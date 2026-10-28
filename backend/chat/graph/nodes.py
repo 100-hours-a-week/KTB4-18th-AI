@@ -2,6 +2,8 @@
 각 노드는 기존 로직을 그대로 호출하는 얇은 wrapper다.
 """
 
+import json
+
 from langchain_core.runnables import RunnableConfig
 
 from backend.chat.graph.state import RecommendationState
@@ -10,12 +12,17 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
+from backend.recommendation.counts import track_limit
 
 
 def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 분류한다."""
 
-    return classify(config["configurable"]["client"], state["messages"])
+    messages = list(state["messages"])
+    if state.get("recent_tracks"):
+        messages.insert(-1, "챗봇이 최근 전송한 곡 목록(번호는 카드 순서): "
+                        + json.dumps(state["recent_tracks"], ensure_ascii=False))
+    return classify(config["configurable"]["client"], messages)
 
 
 def embed_node(state: RecommendationState) -> dict:
@@ -39,8 +46,9 @@ def search_node(state: RecommendationState) -> dict:
         state["query_vector"], exclude_ids=exclude_ids,
         genres=state.get("recommend_genres"), min_year=state.get("recommend_min_year"),
         max_year=state.get("recommend_max_year"),
+        k=track_limit(state.get("requested_count")),
     )
-    return {"tracks": tracks, "shown_track_ids": [t.track_id for t in tracks]}
+    return {"tracks": tracks}
 
 
 def lookup_node(state: RecommendationState) -> dict:
@@ -62,19 +70,20 @@ def lookup_node(state: RecommendationState) -> dict:
     if not (song and artist):
         exclude_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
 
-    rows = lookup_tracks_db(song_title=song, artist=artist, exclude_ids=exclude_ids)
+    limit = track_limit(state.get("requested_count"))
+    rows = lookup_tracks_db(song_title=song, artist=artist, exclude_ids=exclude_ids, limit=limit)
 
     # NOTE: 한국 곡 제목은 카탈로그에 한글("심술")로도, 공식 영문 제목("How People
     # Move")으로도 저장돼 있어서, 원제로 못 찾으면 classify가 준 영문 제목으로 다시 찾는다.
     song_alt = state.get("lookup_song_alt")
     if not rows and song and song_alt:
-        rows = lookup_tracks_db(song_title=song_alt, artist=artist, exclude_ids=exclude_ids)
+        rows = lookup_tracks_db(song_title=song_alt, artist=artist, exclude_ids=exclude_ids, limit=limit)
 
     # NOTE: "coin 노래"처럼 이름 하나만 주면 classify가 곡 제목(IU의 Coin)을 동명의
     # 아티스트(COIN)로 읽는 등 어느 쪽인지 갈리는 경우가 있어, 하나만 채워졌는데
     # 결과가 없으면 같은 이름을 반대 필드로 한 번 더 조회한다.
     if not rows and not (song and artist):
-        rows = lookup_tracks_db(song_title=artist, artist=song, exclude_ids=exclude_ids)
+        rows = lookup_tracks_db(song_title=artist, artist=song, exclude_ids=exclude_ids, limit=limit)
 
     if not rows:
         return {"lookup_status": "not_found"}
@@ -88,12 +97,11 @@ def lookup_node(state: RecommendationState) -> dict:
             preview_url=row.preview_url,
             store_url=row.store_url,
         )
-        for row in rows[:5]
+        for row in rows[:limit]
     ]
     return {
         "lookup_status": "found",
         "lookup_tracks": tracks,
-        "shown_track_ids": [t.track_id for t in tracks],
     }
 
 
