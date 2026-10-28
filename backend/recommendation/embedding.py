@@ -4,9 +4,13 @@ import math
 import os
 
 from openai import OpenAI
+from langsmith import traceable
 from backend.core.errors import _model_unavailable
+from backend.observability import record_usage
 
 
+@traceable(name="검색어 임베딩", run_type="embedding", process_inputs=lambda values: {"text": values["message"]},
+           process_outputs=lambda vector: {"dimensions": len(vector)})
 def embed_query(client: OpenAI, message: str) -> list[float]:
     """사용자 쿼리를 OpenRouter 경유 gemini-embedding-2 벡터로 바꾼다."""
 
@@ -21,6 +25,7 @@ def embed_query(client: OpenAI, message: str) -> list[float]:
         response = client.embeddings.create(
             model=model, input=message, dimensions=3072, encoding_format="float",
         )
+        record_usage(getattr(response, "usage", None), model)
         # NOTE: 반환된 벡터가 쓰레기 값인 경우 추가
         embedded_query = response.data[0].embedding if response.data else None
         if (not embedded_query or len(embedded_query) != 3072

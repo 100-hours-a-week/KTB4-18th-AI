@@ -6,10 +6,12 @@ import os
 
 import httpx
 from pydantic import ValidationError
+from langsmith import traceable
 
 from backend.chat.photo.schemas import Scene
 from backend.core.errors import _error
 from backend.providers.openrouter import OPENROUTER_BASE_URL
+from backend.observability import record_usage
 
 logger = logging.getLogger("uvicorn.error")
 MAIN_TIMEOUT_S = 10
@@ -61,6 +63,8 @@ def _fallback_reason(response: httpx.Response) -> str | None:
     return None
 
 
+@traceable(name="사진 분석", run_type="llm", process_inputs=lambda values: {
+    "image_bytes": len(values["image"]), "fallback": values.get("fallback", False)})
 async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
     """OpenRouter 또는 OpenAI 호환 자체 VLM에 동일한 분석 계약을 전달한다."""
     url = os.getenv("PHOTO_FALLBACK_URL", "") if fallback else OPENROUTER_BASE_URL
@@ -116,6 +120,7 @@ async def call_vlm(image: bytes, *, fallback: bool = False) -> Scene:
         body = response.json()
     except ValueError:
         body = None
+    record_usage(body.get("usage") if isinstance(body, dict) else None, model)
     if response.status_code == 403 and _is_policy_block(body):
         raise ProviderBlocked()
     response.raise_for_status()

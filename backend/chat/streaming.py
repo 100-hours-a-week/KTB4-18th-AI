@@ -5,9 +5,11 @@ import os
 from collections.abc import Iterator
 from typing import Any
 from openai import OpenAI
+from langsmith import traceable
 from db.types import Track
 from backend.chat.schemas import UserContext
 from backend.chat.graph.workflow import record_shown_tracks
+from backend.observability import record_usage, stream_result
 from backend.chat.answer import (
     AnswerHints, answer_input, answer_instructions, count_notice,
     lookup_answer_input, lookup_answer_instructions,
@@ -22,6 +24,8 @@ def sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+@traceable(name="추천 안내 생성", run_type="llm", reduce_fn=stream_result,
+           process_inputs=lambda values: {"request": values["message"]})
 def stream_answer(
     client: OpenAI,
     message: str,
@@ -56,6 +60,7 @@ def stream_answer(
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
+                    record_usage(getattr(getattr(event, "response", None), "usage", None), os.environ["LLM_MODEL"])
                     notice = count_notice(hints, len(tracks))
                     if notice:
                         yield sse("text", {"delta": "\n\n" + notice})
@@ -84,6 +89,8 @@ def stream_answer(
         yield sse("error", {"detail": error_message})
 
 
+@traceable(name="조회 안내 생성", run_type="llm", reduce_fn=stream_result,
+           process_inputs=lambda values: {"request": values["message"]})
 def stream_lookup_answer(
     client: OpenAI,
     message: str,
@@ -116,6 +123,7 @@ def stream_lookup_answer(
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
+                    record_usage(getattr(getattr(event, "response", None), "usage", None), os.environ["LLM_MODEL"])
                     notice = count_notice(hints, len(tracks))
                     if notice:
                         yield sse("text", {"delta": "\n\n" + notice})

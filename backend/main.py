@@ -17,11 +17,14 @@ from backend.core.config import PROJECT_ROOT
 from backend.health.router import router as health_router
 from backend.http.errors import http_error_handler, validation_error_handler
 from backend.stt.router import router as stt_router
+from backend.observability import RequestTracingMiddleware, configure_tracing
 
 # ===== 애플리케이션 설정 =====
 load_dotenv(PROJECT_ROOT / ".env", override=False)
+configure_tracing()
 
 app = FastAPI(title="머문음 AI 채팅", version="0.2.0")
+app.add_middleware(RequestTracingMiddleware)
 # ===== API 엔드포인트 =====
 app.include_router(health_router)
 app.include_router(chat_router)
