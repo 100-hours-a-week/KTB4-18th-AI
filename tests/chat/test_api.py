@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend import main
 from backend.chat import service as recommendation
-from backend.chat.graph import nodes
+from backend.chat.graph import nodes, workflow
 from db.types import Track
 from backend.core.errors import _catalog_unavailable
 
@@ -120,6 +121,7 @@ class FakeOpenAI:
 def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     """파이프라인의 일부만 바꾸게 하는 애가 얘다."""
     fake_openai = FakeOpenAI()
+    monkeypatch.setattr(workflow, "_checkpointer", workflow.InMemorySaver())
     monkeypatch.setenv("OPENROUTER_LLM_API_KEY", "test-key")
     monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
     monkeypatch.setattr(recommendation, "OpenAI", lambda **kwargs: fake_openai)
@@ -137,12 +139,28 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeOpenAI]:
     monkeypatch.setattr(
         nodes,
         "vector_recommendation",
-        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None: (
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None, k=5: (
             [make_track()]
         ),
     )
 
     return TestClient(main.app), fake_openai
+
+
+@pytest.mark.parametrize("intent", ["recommend", "lookup"])
+def test_router_connects_emitted_cards_to_next_request(client, monkeypatch, intent):
+    test_client, _ = client
+    monkeypatch.setattr(nodes, "classify", lambda *_args: classification(intent, lookup_artist="HYUKOH"))
+    monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [make_track_row()])
+    first = test_client.post("/v1/chat/messages", json=request_body("노래 추천해줘"))
+    assert "event: tracks" in first.text
+    seen = []
+    monkeypatch.setattr(nodes, "classify", lambda _client, messages: seen.extend(messages) or classification("guide"))
+    test_client.post("/v1/chat/messages", json=request_body("첫 번째 곡 가수 노래 더"))
+    snapshot = json.loads(seen[-2].split(": ", 1)[1])
+    assert snapshot == [{"rank": 1, "track_id": "123" if intent == "recommend" else "999",
+                         "title": "TOMBOY", "artist": "HYUKOH"}]
+    assert seen[-1] == "첫 번째 곡 가수 노래 더"
 
 
 def test_chat_streams_text_before_completed_track_cards(
@@ -175,7 +193,7 @@ def test_chat_no_match_returns_empty_tracks(
     test_client, fake_openai = client
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None: [],
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None, k=5: [],
     )
 
     response = test_client.post("/v1/chat/messages", json=request_body())
@@ -195,7 +213,7 @@ def test_chat_music_catalog_unavailable_returns_503(
     test_client, _ = client
 
     def failing_vector_recommendation(
-        query_vector: list[float], exclude_ids=None, genres=None, min_year=None, max_year=None,
+        query_vector: list[float], exclude_ids=None, genres=None, min_year=None, max_year=None, k=5,
     ):
         raise _catalog_unavailable()
 
@@ -323,7 +341,7 @@ def test_recommend_forwards_genres_and_year_range_to_search(client, monkeypatch)
     )
     calls: list[dict[str, object]] = []
 
-    def fake_vector_recommendation(query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None):
+    def fake_vector_recommendation(query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None, k=5):
         calls.append({"genres": genres, "min_year": min_year, "max_year": max_year})
         return [make_track()]
 
@@ -336,7 +354,7 @@ def test_recommend_forwards_genres_and_year_range_to_search(client, monkeypatch)
 
 
 def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
-    """검색·답변 생성이 이번 턴 원문이 아니라 classify가 재구성한 recommend_query를 쓰는지 확인한다.
+    """검색은 재구성한 문장을 쓰고, 답변에는 원문과 검색 문장을 구분해 전달한다.
 
     후속 요청("방금 추천한 곡들은 빼고...")은 원문만으론 원래 분위기가 안 담겨 있어서,
     embed_node/search_node가 실수로 state["message"]로 되돌아가면 이 테스트가 잡아준다.
@@ -356,7 +374,7 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
 
     search_calls: list[list[float]] = []
 
-    def fake_vector_recommendation(query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None):
+    def fake_vector_recommendation(query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None, k=5):
         search_calls.append(query_vector)
         return [make_track()]
 
@@ -371,11 +389,10 @@ def test_recommend_uses_recommend_query_not_raw_message(client, monkeypatch):
     assert embed_calls == [resolved_query]
     assert search_calls == [[0.1, 0.2, 0.3]]
 
-    # 최종 답변 생성(stream_answer)도 body.message가 아니라 recommend_query를 받아야 한다.
-    # (한때 main.py가 body.message를 그대로 넘겨서, "이전에 추천된 곡 목록이 없어..."처럼
-    # LLM이 내부 제외 처리를 스스로 검증하려다 헛소리를 하는 문제가 있었다.)
+    # 후속 요청 원문과, 이전 상황을 합친 검색 문장을 함께 전달한다.
     answer_call = fake_openai.responses.calls[0]
-    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
+    assert "사용자 원문: 방금 추천한 곡들은 빼고 다른 곡 3개 추천해줘" in answer_call["input"]
+    assert f"해석한 음악 요청·검색 문장: {resolved_query}" in answer_call["input"]
 
 
 def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch):
@@ -391,7 +408,7 @@ def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch
     monkeypatch.setattr(nodes, "embed_query", lambda embedding_client, message: [0.1, 0.2, 0.3])
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None:
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None, k=5:
             [make_track()],
     )
 
@@ -402,31 +419,86 @@ def test_recommend_passes_non_music_flag_and_style_to_answer(client, monkeypatch
 
     assert response.status_code == 200
     answer_input = fake_openai.responses.calls[0]["input"]
-    assert "사용자 요청: 퇴근길에 듣기 좋은 노래" in answer_input
+    assert "해석한 음악 요청·검색 문장: 퇴근길에 듣기 좋은 노래" in answer_input
     assert "음악 외 요청 포함: 예" in answer_input
     assert "요청 말투: 딸에게 말하는 아빠 말투" in answer_input
 
 
-def test_recommend_passes_requested_and_card_counts_to_answer(client, monkeypatch):
-    """요청한 곡 수와 실제 카드 수를 LLM이 세게 두지 않고 숫자로 넘겨, 채팅이 카드와 어긋나지 않게 한다."""
+@pytest.mark.parametrize("requested,expected", [(None, 5), (1, 1), (2, 2), (5, 5), (6, 5), (10, 5)])
+def test_recommend_uses_requested_count(client, monkeypatch, requested, expected):
+    """요청 개수가 검색에 전달되고 그 개수의 카드가 응답되는지 확인한다."""
     test_client, fake_openai = client
     monkeypatch.setattr(
         nodes, "classify",
-        lambda client, messages: recommend_classification(recommend_query="잔잔한 노래", requested_count=2),
+        lambda client, messages: recommend_classification(recommend_query="잔잔한 노래", requested_count=requested),
     )
     monkeypatch.setattr(
         nodes, "vector_recommendation",
-        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None: (
-            [make_track(track_id=str(i)) for i in range(5)]
-        ),
+        lambda query_vector, **kwargs: [make_track(track_id=str(i)) for i in range(kwargs["k"])],
     )
 
-    response = test_client.post("/v1/chat/messages", json=request_body("잔잔한 노래 2곡 추천해줘"))
+    message = "잔잔한 노래 추천해줘" if requested is None else f"잔잔한 노래 {requested}곡 추천해줘"
+    response = test_client.post("/v1/chat/messages", json=request_body(message))
 
     assert response.status_code == 200
     answer_input = fake_openai.responses.calls[0]["input"]
+    assert f"사용자가 요청한 곡 수: {requested if requested is not None else '없음'}" in answer_input
+    assert f"화면에 카드로 보여지는 곡 수: {expected}" in answer_input
+    assert "서비스의 최대 제공 곡 수: 5" in answer_input
+    assert ("한 번에 최대 5곡까지 보여드릴 수 있어요." in response.text) is (requested is not None and requested > 5)
+    payload = next(line[6:] for block in response.text.split("\n\n") if block.startswith("event: tracks")
+                   for line in block.splitlines() if line.startswith("data: "))
+    assert len(json.loads(payload)["tracks"]) == expected
+
+
+@pytest.mark.parametrize("intent", ["recommend", "lookup"])
+@pytest.mark.parametrize("count", [0, -2])
+def test_non_positive_count_clarifies_without_search(client, monkeypatch, intent, count):
+    test_client, fake_openai = client
+    monkeypatch.setattr(nodes, "classify", lambda *_args: classification(
+        intent, requested_count=count, lookup_artist="IU"))
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("잘못된 개수로 임베딩·DB를 호출하면 안 된다")
+
+    monkeypatch.setattr(nodes, "embed_query", unexpected)
+    monkeypatch.setattr(nodes, "lookup_tracks_db", unexpected)
+    response = test_client.post("/v1/chat/messages", json=request_body("잔잔한 노래 0곡"))
+    assert "1곡 이상" in response.text
+    assert '"tracks": []' in response.text
+    assert fake_openai.responses.calls == []
+
+
+@pytest.mark.parametrize("count,expected", [(1, 1), (2, 2), (5, 5), (10, 5)])
+def test_lookup_uses_requested_count_including_alternate_title(client, monkeypatch, count, expected):
+    test_client, _ = client
+    monkeypatch.setattr(nodes, "classify", lambda *_args: classification(
+        "lookup", lookup_song="한글 제목", lookup_song_alt="English title", requested_count=count))
+    calls = []
+
+    def lookup(**kwargs):
+        calls.append(kwargs)
+        if kwargs["song_title"] == "한글 제목":
+            return []
+        return [make_track_row(track_id=i, title=f"Song {i}") for i in range(kwargs["limit"])]
+
+    monkeypatch.setattr(nodes, "lookup_tracks_db", lookup)
+    response = test_client.post("/v1/chat/messages", json=request_body("한글 제목 찾아줘"))
+    assert len(calls) == 2
+    assert all(call["limit"] == expected for call in calls)
+    assert response.text.count('"track_id":') == expected
+
+
+def test_short_result_keeps_requested_count_in_answer_input(client, monkeypatch):
+    test_client, fake_openai = client
+    monkeypatch.setattr(nodes, "classify", lambda *_args: recommend_classification(requested_count=2))
+    response = test_client.post("/v1/chat/messages", json=request_body("잔잔한 노래 2곡"))
+    answer_input = fake_openai.responses.calls[0]["input"]
     assert "사용자가 요청한 곡 수: 2" in answer_input
-    assert "화면에 카드로 보여지는 곡 수: 5" in answer_input
+    assert "검색에 적용한 최대 곡 수: 2" in answer_input
+    assert "화면에 카드로 보여지는 곡 수: 1" in answer_input
+    assert "찾은 곡은 1곡이에요." in response.text
+    assert response.text.count('"track_id":') == 1
 
 
 def test_lookup_found_streams_lookup_answer(client, monkeypatch):
@@ -446,7 +518,7 @@ def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     monkeypatch.setattr(nodes, "get_embedding_client", unexpected)
     monkeypatch.setattr(
         nodes, "lookup_tracks_db",
-        lambda song_title=None, artist=None, exclude_ids=None: [
+        lambda song_title=None, artist=None, exclude_ids=None, limit=5: [
             make_track_row(track_id=1, title="Dynamite", artist="BTS")
         ],
     )
@@ -459,10 +531,10 @@ def test_lookup_found_streams_lookup_answer(client, monkeypatch):
     assert len(fake_openai.responses.calls) == 1
     assert '"reason"' not in fake_openai.responses.calls[0]["input"]
     assert "event: done" in response.text
-    # 최종 답변 생성(stream_lookup_answer)도 recommend처럼 body.message가 아니라
-    # classify가 재구성한 recommend_query를 받아야 한다.
+    # 조회도 원문과 해석된 조회 대상을 구분한다.
     answer_call = fake_openai.responses.calls[0]
-    assert f"사용자 요청: {resolved_query}" in answer_call["input"]
+    assert "사용자 원문: Dynamite BTS 노래 보여줘" in answer_call["input"]
+    assert f"해석한 음악 요청·검색 문장: {resolved_query}" in answer_call["input"]
 
 
 def test_lookup_title_only_multiple_artists_are_all_shown_as_found(client, monkeypatch):
@@ -479,7 +551,7 @@ def test_lookup_title_only_multiple_artists_are_all_shown_as_found(client, monke
     monkeypatch.setattr(nodes, "get_embedding_client", unexpected)
     monkeypatch.setattr(
         nodes, "lookup_tracks_db",
-        lambda song_title=None, artist=None, exclude_ids=None: [
+        lambda song_title=None, artist=None, exclude_ids=None, limit=5: [
             make_track_row(track_id=1, title="Dynamite", artist="BTS"),
             make_track_row(track_id=2, title="Dynamite", artist="ITZY"),
         ],
@@ -504,7 +576,7 @@ def test_lookup_not_found_returns_not_found_text(client, monkeypatch):
         pytest.fail("정보 없는 lookup 요청에서 임베딩 실행")
 
     monkeypatch.setattr(nodes, "get_embedding_client", unexpected)
-    monkeypatch.setattr(nodes, "lookup_tracks_db", lambda song_title=None, artist=None, exclude_ids=None: [])
+    monkeypatch.setattr(nodes, "lookup_tracks_db", lambda song_title=None, artist=None, exclude_ids=None, limit=5: [])
     response = test_client.post("/v1/chat/messages", json=request_body("존재하지않는곡 정보 알려줘"))
 
     assert response.status_code == 200
@@ -523,7 +595,7 @@ def test_lookup_artist_only_not_found_retries_as_song_title(client, monkeypatch)
 
     calls: list[tuple] = []
 
-    def fake_lookup(song_title=None, artist=None, exclude_ids=None):
+    def fake_lookup(song_title=None, artist=None, exclude_ids=None, limit=5):
         calls.append((song_title, artist))
         return [make_track_row(track_id=7, title="Coin", artist="IU")] if song_title == "COIN" else []
 
@@ -549,7 +621,7 @@ def test_lookup_korean_title_not_found_retries_with_alt_title(client, monkeypatc
 
     calls: list[tuple] = []
 
-    def fake_lookup(song_title=None, artist=None, exclude_ids=None):
+    def fake_lookup(song_title=None, artist=None, exclude_ids=None, limit=5):
         calls.append((song_title, artist))
         if song_title == "How People Move":
             return [make_track_row(track_id=8, title="How People Move", artist="AKMU")]
@@ -577,4 +649,17 @@ def test_lookup_no_target_asks_without_db_call(client, monkeypatch):
 
     assert response.status_code == 200
     assert 'event: tracks\ndata: {"tracks": []}' in response.text
+    assert fake_openai.responses.calls == []
+
+
+def test_ambiguous_reference_with_recent_cards_asks_for_card_order(client, monkeypatch):
+    test_client, fake_openai = client
+    workflow.record_shown_tracks(THREAD_ID, [
+        {"track_id": "1", "title": "첫 곡", "artist": "가수"},
+        {"track_id": "2", "title": "다음 곡", "artist": "가수"},
+    ])
+    monkeypatch.setattr(nodes, "classify", lambda client, messages: classification("clarify"))
+    response = test_client.post("/v1/chat/messages", json=request_body("그 곡 다시"))
+    assert "카드 순서나 곡 제목" in response.text
+    assert "대화에서 찾지 못했어요" not in response.text
     assert fake_openai.responses.calls == []

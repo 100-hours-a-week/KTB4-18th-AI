@@ -3,6 +3,7 @@
 from db.types import Track
 from backend.core.errors import _catalog_unavailable
 from backend.recommendation.adapter import search_space, to_v4_query
+from backend.recommendation.counts import DEFAULT_TRACK_COUNT
 
 
 def vector_recommendation(
@@ -11,6 +12,7 @@ def vector_recommendation(
     genres: list[str] = None,
     min_year: int = None,
     max_year: int = None,
+    k: int = DEFAULT_TRACK_COUNT,
 ) -> list[Track]:
     """pgvector 검색 결과의 추천곡을 가져온다. SEARCH_EMBEDDING=v4면 검색어를 v4 공간으로 바꿔 찾는다."""
 
@@ -27,7 +29,7 @@ def vector_recommendation(
         with SessionLocal() as session:
             tracks = vector_search(
                 session, qvec, exclude_ids=exclude_ids, genres=genres,
-                min_year=min_year, max_year=max_year, space=space,
+                min_year=min_year, max_year=max_year, space=space, k=k,
             )
     except Exception as error:
         raise _catalog_unavailable() from error
@@ -36,7 +38,8 @@ def vector_recommendation(
 
 
 def lookup_tracks_db(
-    song_title: str = None, artist: str = None, exclude_ids: set[int] = None, seed_artist: str = None,
+    song_title: str = None, artist: str = None, exclude_ids: set[int] = None,
+    limit: int = DEFAULT_TRACK_COUNT, seed_artist: str = None,
 ) -> list:
     """제목/아티스트로 DB에서 곡을 조회한다."""
 
@@ -45,7 +48,7 @@ def lookup_tracks_db(
         from db.search import lookup as db_lookup
 
         with SessionLocal() as session:
-            return db_lookup(session, song_title=song_title, artist=artist, exclude_ids=exclude_ids,
+            return db_lookup(session, song_title=song_title, artist=artist, exclude_ids=exclude_ids, limit=limit,
                              seed_artist=seed_artist)
     except Exception as error:
         raise _catalog_unavailable() from error

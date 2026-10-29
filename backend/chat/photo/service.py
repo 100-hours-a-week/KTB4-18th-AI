@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 import httpx
 from fastapi import HTTPException, UploadFile
 
-from backend.chat.graph.workflow import build_graph
+from backend.chat.graph.workflow import build_graph, record_shown_tracks
 from backend.chat.photo import image, vlm
 from backend.chat.photo.schemas import Scene
 from backend.chat.streaming import sse
@@ -43,6 +43,7 @@ def recommend_scene(scene: Scene, thread_id: str) -> list[dict]:
         "messages": ["사진의 장소 맥락: " + scene.model_dump_json()],
         "intent": "recommend", "recommend_query": scene.music_query,
         "recommend_genres": None, "recommend_min_year": None, "recommend_max_year": None,
+        "requested_count": None,
     }, config={"configurable": {"thread_id": thread_id}})
     return [track.model_dump() for track in result["tracks"]]
 
@@ -134,6 +135,7 @@ async def open_photo_stream(
                 tracks = await asyncio.shield(worker)
                 if not tracks:
                     yield sse("text", {"delta": "\n\n조건에 맞는 곡을 찾지 못했어요."})
+                record_shown_tracks(thread, tracks)
                 yield sse("tracks", {"tracks": tracks})
                 outcome = "ok"
                 yield sse("done", {"elapsed_ms": round((time.monotonic() - started) * 1000)})

@@ -19,12 +19,17 @@ GUIDE_TEXT = (
 OUT_OF_SCOPE_TEXT = "죄송해요, 저는 음악 추천과 곡 정보 조회만 도와드릴 수 있어요."
 NOT_FOUND_TEXT = "요청하신 곡 정보를 찾지 못했어요. 곡 제목이나 아티스트명을 다시 확인해 주세요."
 CLARIFY_TEXT = {
+    "invalid_count": "곡 수는 1곡 이상으로 알려주세요. 예: '잔잔한 노래 2곡 추천해줘'",
     # NOTE: 채팅방을 나가면 대화 기억이 사라지고 추천곡만 히스토리에 남는 구조라,
     # 대화에 없는 내용을 가리키면 히스토리를 안내한다.
     "missing_reference": (
         "말씀하신 내용을 이 대화에서 찾지 못했어요. 채팅방을 나가면 이전 대화는 "
         "이어지지 않고, 추천받았던 곡은 히스토리에서 다시 확인하실 수 있어요. "
         "찾으시는 곡이나 분위기를 다시 알려주시면 도와드릴게요."
+    ),
+    "ambiguous_reference": (
+        "어떤 곡을 말씀하시는지 카드 순서나 곡 제목으로 알려주세요. "
+        "예: '두 번째 곡 다시 보여줘'"
     ),
     "lookup_ambiguous": (
         "어떤 곡이나 아티스트를 찾으시는지 조금 더 구체적으로 알려주세요. 예: '아이유 밤편지'"
@@ -79,6 +84,9 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     )
 
     intent = result["intent"]
+    count = result.get("requested_count")
+    if intent in ("recommend", "lookup") and count is not None and count < 1:
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT["invalid_count"])
 
     if intent == "fast_mode":
         return ChatOutcome(kind="static", text=FAST_MODE_ON_TEXT)
@@ -104,7 +112,8 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         return ChatOutcome(kind="static", text=GUIDE_TEXT)
 
     if intent == "clarify":
-        return ChatOutcome(kind="static", text=CLARIFY_TEXT["missing_reference"])
+        key = "ambiguous_reference" if result.get("recent_tracks") else "missing_reference"
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT[key])
 
     if intent == "lookup":
         status = result["lookup_status"]

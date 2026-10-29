@@ -1,4 +1,5 @@
 import json
+import pytest
 from types import SimpleNamespace
 
 from backend.recommendation import intent
@@ -48,3 +49,35 @@ def test_classify_keeps_known_genres_in_db_spelling(monkeypatch):
     result = intent.classify(fake_client(classification_json(recommend_genres=["k-pop", "Ballad"])), ["케이팝 노래"])
 
     assert result["recommend_genres"] == ["K-Pop"]
+
+
+@pytest.mark.parametrize("count", [True, "2", 2.5])
+def test_classify_rejects_non_integer_count(monkeypatch, count):
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setattr(intent, "known_genres", lambda: [])
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as error:
+        intent.classify(fake_client(classification_json(requested_count=count)), ["노래 2곡"])
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize("space", ["gemini", "v4"])
+def test_genre_catalog_uses_active_search_space(monkeypatch, space):
+    from contextlib import nullcontext
+    from db import models, search
+
+    session = object()
+    calls = []
+    monkeypatch.setenv("SEARCH_EMBEDDING", space)
+    monkeypatch.setattr(intent, "_genre_cache", None)
+    monkeypatch.setattr(models, "SessionLocal", lambda: nullcontext(session))
+
+    def catalog(actual_session, *, space):
+        assert actual_session is session
+        calls.append(space)
+        return ["Jazz"]
+
+    monkeypatch.setattr(search, "known_genres", catalog)
+    assert intent.known_genres() == ["Jazz"]
+    assert calls == [space]
