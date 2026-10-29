@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from backend.chat.graph.nodes import (
     classify_node,
     embed_node,
+    jev_node,
     lookup_node,
     search_node,
 )
@@ -21,6 +22,28 @@ from backend.chat.graph.state import RecommendationState
 # 같은 thread_id 요청이 다른 프로세스로 갈 수 있어 기억이 안 보일 수 있다.
 # 지금 규모에선 괜찮지만 배포 구조가 바뀌면(워커 여러 개, 여러 대) 재검토할 것.
 _checkpointer = InMemorySaver()
+
+
+def route_entry(state: RecommendationState) -> str:
+    """고속 모드가 켜진 대화면 classify(LLM) 대신 jev로 들어간다."""
+
+    return "jev" if state.get("fast_mode") else "classify"
+
+
+def route_by_jev(state: RecommendationState) -> str:
+    """추천은 jev_node가 Jev와 동시에 임베딩까지 해뒀으니 바로 검색으로 보낸다. 조회는 jev_node가
+    곡을 찾았으면 끝내고, 못 찾았으면 제목·아티스트 추출을 위해 classify로 보낸다.
+    guide/out_of_scope는 고정 안내라 끝낸다. Jev가 실패했거나 미지원 조건을 감지했으면 classify로 보낸다."""
+
+    if state["jev_failed"] or state["jev_unsupported"]:
+        return "classify"
+    intent = state["intent"]
+    if intent == "recommend":
+        # 미지원이 확실해 jev_node가 바로 미지원으로 정했으면 검색 없이 끝낸다(안내는 prepare_recommendation).
+        return END if state["recommend_unsupported_condition"] else "search"
+    if intent == "lookup":
+        return END if state["lookup_status"] == "found" else "classify"
+    return END
 
 
 def route_by_intent(state: RecommendationState) -> str:
@@ -56,11 +79,18 @@ def build_graph(*, photo: bool = False):
     graph.add_node("embed", embed_node)
     graph.add_node("search", search_node)
     graph.add_node("lookup", lookup_node)
+    graph.add_node("jev", jev_node)
 
     # NOTE: 사진은 VLM이 만든 검색 조건으로 진입하므로 텍스트 의도 분류를 생략한다.
-    graph.add_edge(START, "embed" if photo else "classify")
+    if photo:
+        graph.add_edge(START, "embed")
+    else:
+        graph.add_conditional_edges(START, route_entry, {"classify": "classify", "jev": "jev"})
     graph.add_conditional_edges(
         "classify", route_by_intent, {"embed": "embed", "lookup": "lookup", END: END},
+    )
+    graph.add_conditional_edges(
+        "jev", route_by_jev, {"search": "search", "classify": "classify", END: END},
     )
     graph.add_edge("embed", "search")
     graph.add_edge("search", END)

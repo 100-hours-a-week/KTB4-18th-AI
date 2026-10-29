@@ -43,13 +43,20 @@ CLARIFY_TEXT = {
         "연도로 말씀해 주시면 찾아드릴게요."
     ),
 }
+# NOTE: 고속 모드는 끄는 경로 없이, 채팅방을 새로 열면(thread_id가 바뀌면) 풀린다.
+FAST_MODE_ON_TEXT = (
+    "고속 모드를 켰어요. 이제부터 설명 없이 곡만 빠르게 보여드려요. "
+    "설명이 있는 일반 대화로 돌아가려면 채팅방을 새로 열어주세요."
+)
+FAST_RECOMMEND_TEXT = "고속 모드로 추천한 음악이에요."
+FAST_LOOKUP_TEXT = "고속 모드로 찾은 곡이에요."
 
 
 @dataclass
 class ChatOutcome:
     """prepare_recommendation의 결과. main.py가 이 kind를 보고 SSE 조립 방식을 고른다."""
 
-    kind: Literal["recommend", "lookup", "static"]
+    kind: Literal["recommend", "lookup", "static", "fast"]
     client: OpenAI | None = None
     tracks: list[Track] | None = None
     text: str | None = None
@@ -81,11 +88,21 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     if intent in ("recommend", "lookup") and count is not None and count < 1:
         return ChatOutcome(kind="static", text=CLARIFY_TEXT["invalid_count"])
 
+    if intent == "fast_mode":
+        return ChatOutcome(kind="static", text=FAST_MODE_ON_TEXT)
+
+    # NOTE: 고속 모드도 분기는 일반 모드와 같고, 곡을 보여주는 경우에만 LLM 답변
+    # 생성 없이 고정 문구 + 곡 카드(kind="fast")로 내려준다.
+    fast_mode = result.get("fast_mode", False)
+
     if intent == "recommend":
         if result["recommend_unsupported_condition"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_unsupported_condition"])
         if not result["recommend_has_enough_info"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_insufficient_info"])
+        if fast_mode:
+            return ChatOutcome(kind="fast", tracks=result["tracks"], text=FAST_RECOMMEND_TEXT,
+                               hints=AnswerHints.from_classification(result))
         return ChatOutcome(
             kind="recommend", client=client, tracks=result["tracks"],
             query=result["recommend_query"],
@@ -102,6 +119,9 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     if intent == "lookup":
         status = result["lookup_status"]
         if status == "found":
+            if fast_mode:
+                return ChatOutcome(kind="fast", tracks=result["lookup_tracks"], text=FAST_LOOKUP_TEXT,
+                                   hints=AnswerHints.from_classification(result))
             return ChatOutcome(
                 kind="lookup", client=client, tracks=result["lookup_tracks"],
                 query=result["recommend_query"],
