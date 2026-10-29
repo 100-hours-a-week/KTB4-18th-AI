@@ -5,7 +5,8 @@ from datetime import date
 import pytest
 
 from backend.recommendation.fast import (
-    asks_unsupported, next_search_parts, pattern_year_range, requested_count, resolve_years, year_range,
+    next_search_parts, pattern_year_range, requested_count, resolve_years, unsupported_action, unsupported_score,
+    year_range,
 )
 
 
@@ -83,16 +84,25 @@ def test_next_search_parts_without_previous_starts_new():
     assert next_search_parts([], "하나 더 줘", answers) == ["하나 더 줘"]
 
 
+def test_unsupported_score_is_highest_of_four():
+    answers = {"by_lyrics": {"noul": 0.1}, "by_ranking": {"noul": 0.93}, "by_number": {"noul": 0.2},
+               "by_topic": {"noul": 0.62}}
+    assert unsupported_score(answers) == 0.93
+
+
 @pytest.mark.parametrize(
-    ("scores", "expected"),
+    ("score", "expected"),
     [
-        ({"by_lyrics": 0.96, "by_ranking": 0.1, "by_number": 0.1, "by_topic": 0.1}, True),
-        ({"by_lyrics": 0.1, "by_ranking": 0.1, "by_number": 0.1, "by_topic": 0.62}, False),  # "생일 노래" 오탐 수준
-        ({"by_lyrics": 0.1, "by_ranking": 0.1, "by_number": 0.1, "by_topic": 0.1}, False),
+        (0.9, "refuse"),     # 바로 거절 기준(UNSUPPORTED_REFUSE)과 같으면 거절
+        (0.89, "recheck"),   # 바로 아래면 classify가 다시 판단 ("이별 노래" 0.85 수준)
+        (0.7, "recheck"),    # classify 기준(UNSUPPORTED_CONFIDENT)과 같으면 다시 판단
+        (0.69, None),        # 바로 아래면 그대로 고속 처리
+        (0.62, None),        # "생일 노래 추천해줘" 수준
     ],
 )
-def test_asks_unsupported(scores, expected):
-    assert asks_unsupported({name: {"noul": value} for name, value in scores.items()}) is expected
+def test_unsupported_action_boundaries(score, expected):
+    answers = {name: {"noul": 0.1} for name in ("by_lyrics", "by_ranking", "by_number")} | {"by_topic": {"noul": score}}
+    assert unsupported_action(answers) == expected
 
 
 @pytest.mark.parametrize(

@@ -12,8 +12,8 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
-    artist_question, asks_unsupported, candidate_parts, embed_candidates, find_lookup_rows, genre_filter,
-    genre_question, jev_state, requested_count, resolve_intent, resolve_years, year_questions,
+    artist_question, candidate_parts, embed_candidates, find_lookup_rows, genre_filter, genre_question, jev_state,
+    requested_count, resolve_intent, resolve_years, unsupported_action, year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -148,10 +148,15 @@ def jev_node(state: RecommendationState) -> dict:
                      **year_questions()}
         answers = decide(jev_state(messages), questions)
         intent = resolve_intent(answers)
-        # NOTE: 미지원 조건은 classify가 정확히 판단해 "못 찾아요" 안내를 낸다. lookup도 넘긴다.
-        # "아이유 노래 중에 잘 모르는 곡만"은 Jev가 아이유를 확신해 lookup이 되는데, 그대로 두면
-        # 아이유 곡이 아무거나 나가는 조용한 오답이 된다.
-        if intent in ("recommend", "lookup") and asks_unsupported(answers):
+        # NOTE: 미지원 조건은 lookup도 확인한다. "아이유 노래 중에 잘 모르는 곡만"은 Jev가 아이유를 확신해
+        # lookup이 되는데, 그대로 두면 아이유 곡이 아무거나 나가는 조용한 오답이 된다.
+        # 확실하면 바로 미지원 안내로 끝내고, 애매하면 classify가 지원 여부를 다시 판단한다.
+        action = unsupported_action(answers) if intent in ("recommend", "lookup") else None
+        if action == "refuse":
+            return {"jev_failed": False, "jev_unsupported": False, "intent": "recommend",
+                    "recommend_unsupported_condition": True, "recommend_has_enough_info": True,
+                    "requested_count": None}
+        if action == "recheck":
             return {"jev_failed": False, "jev_unsupported": True}
         rows = find_lookup_rows(messages, answers, shown_ids) if intent == "lookup" else None
     except JevUnavailable:

@@ -259,16 +259,32 @@ def embed_candidates(parts_by_choice: dict[str, list[str]]) -> dict[str, Future]
     return {query: _embed_pool.submit(embed_query, client, query) for query in queries}
 
 
-# NOTE: 미지원 문장은 가장 낮아도 0.93이었고, 유일한 오탐 "생일 노래 추천해줘"는 주제 기준 0.62였다.
-# 오탐이어도 classify가 지원 여부를 다시 판단해 느려질 뿐 틀리진 않지만, 0.7로 두면 그마저 줄어든다.
+# NOTE: 미지원 확신 구간별로 처리를 나눈다.
+# - 0.9 이상: 바로 미지원 안내. 0.9 이상이었던 12문장(진짜 미지원 7 + "제일 유명한 거"·"인기 있는 곡이면"
+#   ·"요즘 유행하는" 등)은 classify도 전부 미지원으로 판단해서, classify를 기다릴 필요가 없다(3~4초 → 0.5초).
+# - 0.7~0.9: classify가 다시 판단. "크리스마스 노래"(0.77)·"이별 노래"(0.85)는 classify가 지원으로 보는데,
+#   바로 거절하면 틀린 거절이 된다.
+# - 0.7 미만: 그대로 고속 처리. "생일 노래 추천해줘"(0.62)처럼 애매한 문장이 여기 걸린다.
 UNSUPPORTED_CONFIDENT = 0.7
+UNSUPPORTED_REFUSE = 0.9
 UNSUPPORTED_QUESTIONS = ("by_lyrics", "by_ranking", "by_number", "by_topic")
 
 
-def asks_unsupported(answers: dict) -> bool:
-    """가사·순위·정확한 수치·주제처럼 우리가 가진 정보로 고를 수 없는 기준을 요구하는가."""
+def unsupported_score(answers: dict) -> float:
+    """가사·순위·정확한 수치·주제처럼 우리가 가진 정보로 고를 수 없는 기준을 요구한다는 확신(넷 중 최고)."""
 
-    return any(answers[name]["noul"] >= UNSUPPORTED_CONFIDENT for name in UNSUPPORTED_QUESTIONS)
+    return max(answers[name]["noul"] for name in UNSUPPORTED_QUESTIONS)
+
+
+def unsupported_action(answers: dict) -> str | None:
+    """미지원 확신에 따른 처리: "refuse"(바로 미지원 안내) / "recheck"(classify가 다시 판단) / None(고속 처리)."""
+
+    score = unsupported_score(answers)
+    if score >= UNSUPPORTED_REFUSE:
+        return "refuse"
+    if score >= UNSUPPORTED_CONFIDENT:
+        return "recheck"
+    return None
 
 
 # NOTE: "2곡만", "한 곡만", "20곡"처럼 실제로 곡 수를 말하면 확신이 1.0이고, "영어 이메일 하나 써주고"·

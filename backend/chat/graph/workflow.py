@@ -39,7 +39,8 @@ def route_by_jev(state: RecommendationState) -> str:
         return "classify"
     intent = state["intent"]
     if intent == "recommend":
-        return "search"
+        # 미지원이 확실해 jev_node가 바로 미지원으로 정했으면 검색 없이 끝낸다(안내는 prepare_recommendation).
+        return END if state["recommend_unsupported_condition"] else "search"
     if intent == "lookup":
         return END if state["lookup_status"] == "found" else "classify"
     return END

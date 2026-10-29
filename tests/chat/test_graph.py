@@ -33,13 +33,14 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none", "none", "new", 0.05),
         "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none", "new", 0.05),
         "아이유 노래 중 잘 모르는 곡만": ("lookup", "IU", 0.99, 0.05, "K-Pop", "none", "none", "new", 0.93),
+        "빠른 노래, 한 120 BPM 정도면": ("recommend", "none", 0.9, 0.0, "none", "none", "none", "new", 0.88),
     }
 
     def classify(_client, messages):
         classify_calls.append(messages[-1])
         if messages[-1] == "그 노래 찾아줘":
             return {"intent": "lookup", "lookup_song": None, "lookup_artist": None}
-        if messages[-1] == "아이유 노래 중 잘 모르는 곡만":
+        if messages[-1] == "빠른 노래, 한 120 BPM 정도면":
             return {"intent": "recommend", "recommend_unsupported_condition": True, "recommend_has_enough_info": True}
         return {"intent": "fast_mode", "recommend_genres": ["Pop"]}
 
@@ -99,14 +100,17 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     assert looked_up["intent"] == "lookup"
     assert looked_up["lookup_status"] == "ambiguous"
     assert looked_up["fast_mode"] is True
-    # 미지원 조건이면 lookup이어도 그 턴만 classify로 넘겨 "못 찾아요" 안내를 받게 한다.
-    unsupported = send("아이유 노래 중 잘 모르는 곡만")
-    assert unsupported["intent"] == "recommend"
-    assert unsupported["recommend_unsupported_condition"] is True
+    # 미지원이 확실하면(0.9 이상) lookup이어도 classify 없이 바로 미지원으로 끝낸다.
+    refused = send("아이유 노래 중 잘 모르는 곡만")
+    assert refused["intent"] == "recommend"
+    assert refused["recommend_unsupported_condition"] is True
+    # 애매하면(0.7~0.9) 그 턴만 classify가 지원 여부를 다시 판단한다.
+    rechecked = send("빠른 노래, 한 120 BPM 정도면")
+    assert rechecked["recommend_unsupported_condition"] is True
 
-    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "아이유 노래 중 잘 모르는 곡만"]
+    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "빠른 노래, 한 120 BPM 정도면"]
     assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘",
-                         "아이유 노래 중 잘 모르는 곡만"]
+                         "아이유 노래 중 잘 모르는 곡만", "빠른 노래, 한 120 BPM 정도면"]
     # 임베딩은 Jev 답을 기다리지 않고 후보마다 미리 출발한다("좀 더 신나게" 턴은 new/continue/repeat 후보 3개).
     assert {"좀 더 신나게", "90년대 잔잔한 힙합 좀 더 신나게", "90년대 잔잔한 힙합"} <= set(embedded)
     # 검색에는 Jev 답에 맞는 후보의 벡터가 쓰인다. 장르·연도는 고속 모드 전 classify가 남긴
