@@ -22,15 +22,20 @@ def sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def stream_fast_answer(text: str, tracks: list[Track]) -> Iterator[str]:
+def stream_fast_answer(text: str, tracks: list[Track], *, thread_id: str | None = None) -> Iterator[str]:
     """고속 모드: LLM 답변 없이 고정 문구와 곡을 바로 전송한다.
 
     NOTE: 명세상 text 이벤트가 반드시 와야 해서(없으면 Spring 쪽에서 오류), 고정
     안내 문구처럼 문장 전체를 text 이벤트 하나에 담아 보낸다.
+    NOTE: stream_answer와 같이 카드를 보내는 시점에 보여준 곡을 기록한다. 기록해야 고속 모드의
+    "다른 곡으로 더 줘"(repeat)가 이미 보여준 곡을 빼고 찾는다.
     """
 
     yield sse("text", {"delta": text if tracks else NO_TRACKS_MESSAGE})
-    yield sse("tracks", {"tracks": [track.model_dump() for track in tracks]})
+    cards = [track.model_dump() for track in tracks]
+    if thread_id:
+        record_shown_tracks(thread_id, cards)
+    yield sse("tracks", {"tracks": cards})
     yield sse("done", {})
 
 

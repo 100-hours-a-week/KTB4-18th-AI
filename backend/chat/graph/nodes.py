@@ -140,8 +140,8 @@ def jev_node(state: RecommendationState) -> dict:
             )
             for row in rows[:5]
         ]
-        result |= {"lookup_status": "found", "lookup_tracks": tracks,
-                   "shown_track_ids": [t.track_id for t in tracks]}
+        # NOTE: 보여준 곡(shown_track_ids)은 lookup_node와 같이 SSE로 카드를 보낼 때 기록한다.
+        result |= {"lookup_status": "found", "lookup_tracks": tracks}
     return result
 
 
