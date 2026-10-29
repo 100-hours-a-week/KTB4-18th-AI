@@ -12,8 +12,8 @@ from backend.recommendation.intent import classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
-    artist_question, candidate_parts, embed_candidates, find_lookup_rows, genre_filter, genre_question, jev_state,
-    resolve_intent, resolve_years, year_questions,
+    artist_question, asks_unsupported, candidate_parts, embed_candidates, find_lookup_rows, genre_filter,
+    genre_question, jev_state, resolve_intent, resolve_years, year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -73,6 +73,35 @@ JEV_QUESTIONS = {
             "repeat": "새 조건 없이 같은 조건으로 다시 달라는 요청(예: '다른 곡으로 더 줘', '하나 더')",
         },
     },
+    # NOTE: 미지원 조건을 "분위기·상황으로 바꿔 읽을 수 없는 조건을 요구하는가" 하나로 물었을 땐 Jev가
+    # 거의 못 알아봤다("가사에 비가 나오는 노래" 0.25~0.37). 무엇을 기준으로 고르라는지 구체적인 사실
+    # 질문 넷으로 쪼개니 미지원 21/21을 0.93~0.98로 잡고, 일반 추천 91문장 중 오탐은 1개였다.
+    # 예시 문구를 주면 그 문구만 외우므로 기준만 정의한다(fast.asks_unsupported).
+    "by_lyrics": {
+        "type": "noul",
+        "instructions": "사용자가 노래 가사에 무엇이 나오는지를 기준으로 노래를 고르라고 하는가",
+        "criteria": {"true": "가사의 내용·단어를 기준으로 고르라고 함",
+                     "false": "가사 내용과 상관없이 고르라고 함"},
+    },
+    "by_ranking": {
+        "type": "noul",
+        "instructions": "사용자가 차트 순위·인기·인지도처럼 다른 사람들의 반응을 기준으로 노래를 고르라고 하는가",
+        "criteria": {"true": "얼마나 인기 있는지·알려졌는지를 기준으로 고르라고 함",
+                     "false": "사람들의 반응과 상관없이 고르라고 함"},
+    },
+    "by_number": {
+        "type": "noul",
+        "instructions": "사용자가 템포·길이 같은 음악 속성을 정확한 숫자 값으로 지정해 노래를 고르라고 하는가",
+        "criteria": {"true": "정확한 숫자 값을 기준으로 고르라고 함",
+                     "false": "숫자 값을 지정하지 않음(빠른·느린 같은 느낌은 해당 없음)"},
+    },
+    "by_topic": {
+        "type": "noul",
+        "instructions": "사용자가 노래를 듣는 상황·분위기가 아니라, 노래가 무엇에 관한 곡인지(주제·소재)로만 노래를 "
+                        "고르라고 하는가",
+        "criteria": {"true": "노래의 주제·소재로만 고르라고 함",
+                     "false": "듣는 상황·분위기·장르·연도로 고르라고 함"},
+    },
 }
 
 
@@ -108,6 +137,11 @@ def jev_node(state: RecommendationState) -> dict:
                      **year_questions()}
         answers = decide(jev_state(messages), questions)
         intent = resolve_intent(answers)
+        # NOTE: 미지원 조건은 classify가 정확히 판단해 "못 찾아요" 안내를 낸다. lookup도 넘긴다.
+        # "아이유 노래 중에 잘 모르는 곡만"은 Jev가 아이유를 확신해 lookup이 되는데, 그대로 두면
+        # 아이유 곡이 아무거나 나가는 조용한 오답이 된다.
+        if intent in ("recommend", "lookup") and asks_unsupported(answers):
+            return {"jev_failed": False, "jev_unsupported": True}
         rows = find_lookup_rows(messages, answers, shown_ids) if intent == "lookup" else None
     except JevUnavailable:
         return {"jev_failed": True}
@@ -115,6 +149,7 @@ def jev_node(state: RecommendationState) -> dict:
     min_year, max_year = resolve_years(state["message"], answers)
     result = {
         "jev_failed": False,
+        "jev_unsupported": False,
         "intent": intent,
         "lookup_status": None,
         "recommend_has_enough_info": True,

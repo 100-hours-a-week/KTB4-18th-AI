@@ -4,7 +4,9 @@ from datetime import date
 
 import pytest
 
-from backend.recommendation.fast import next_search_parts, pattern_year_range, resolve_years, year_range
+from backend.recommendation.fast import (
+    asks_unsupported, next_search_parts, pattern_year_range, resolve_years, year_range,
+)
 
 
 @pytest.mark.parametrize(
@@ -79,6 +81,18 @@ def test_next_search_parts_keeps_recent_messages_only():
 def test_next_search_parts_without_previous_starts_new():
     answers = {"continues": {"choice": "repeat", "confidence": 0.9}}
     assert next_search_parts([], "하나 더 줘", answers) == ["하나 더 줘"]
+
+
+@pytest.mark.parametrize(
+    ("scores", "expected"),
+    [
+        ({"by_lyrics": 0.96, "by_ranking": 0.1, "by_number": 0.1, "by_topic": 0.1}, True),
+        ({"by_lyrics": 0.1, "by_ranking": 0.1, "by_number": 0.1, "by_topic": 0.62}, False),  # "생일 노래" 오탐 수준
+        ({"by_lyrics": 0.1, "by_ranking": 0.1, "by_number": 0.1, "by_topic": 0.1}, False),
+    ],
+)
+def test_asks_unsupported(scores, expected):
+    assert asks_unsupported({name: {"noul": value} for name, value in scores.items()}) is expected
 
 
 def test_year_range_treats_this_year_as_open_end():

@@ -25,31 +25,36 @@ def test_thread_messages_survive_graph_rebuild(monkeypatch):
 def test_fast_mode_switches_entry_to_jev(monkeypatch):
     classify_calls, jev_calls, embedded, searched = [], [], [], []
 
-    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year_from, year_to, continues)
+    # 메시지별 Jev 1단계 답: (intent, artist, artist 확신, has_title, genre, year_from, year_to, continues, 순위 기준)
     jev_answers = {
-        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990", "1999", "new"),
-        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none", "new"),
-        "좀 더 신나게": ("recommend", "none", 0.9, 0.0, "none", "none", "none", "continue"),
-        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none", "none", "new"),
-        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none", "new"),
+        "90년대 잔잔한 힙합": ("recommend", "none", 0.9, 0.0, "Hip-Hop", "1990", "1999", "new", 0.05),
+        "오늘 점심 뭐 먹지": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none", "new", 0.05),
+        "좀 더 신나게": ("recommend", "none", 0.9, 0.0, "none", "none", "none", "continue", 0.05),
+        "악뮤 노래": ("lookup", "AKMU", 0.99, 0.05, "K-Pop", "none", "none", "new", 0.05),
+        "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none", "new", 0.05),
+        "아이유 노래 중 잘 모르는 곡만": ("lookup", "IU", 0.99, 0.05, "K-Pop", "none", "none", "new", 0.93),
     }
 
     def classify(_client, messages):
         classify_calls.append(messages[-1])
         if messages[-1] == "그 노래 찾아줘":
             return {"intent": "lookup", "lookup_song": None, "lookup_artist": None}
+        if messages[-1] == "아이유 노래 중 잘 모르는 곡만":
+            return {"intent": "recommend", "recommend_unsupported_condition": True, "recommend_has_enough_info": True}
         return {"intent": "fast_mode", "recommend_genres": ["Pop"]}
 
     def decide(state, _questions):
         # jev_state가 마지막 줄을 "이번 메시지(판단 대상): ..."로 만든다.
         message = state[-1].split(": ", 1)[1]
         jev_calls.append(message)
-        intent, artist, confidence, has_title, genre, year_from, year_to, continues = jev_answers[message]
+        intent, artist, confidence, has_title, genre, year_from, year_to, continues, ranking = jev_answers[message]
         return {"intent": {"choice": intent}, "artist": {"choice": artist, "confidence": confidence},
                 "has_title": {"noul": has_title}, "genre": {"choice": genre, "confidence": 0.9},
                 "year_from": {"choice": year_from, "confidence": 0.9},
                 "year_to": {"choice": year_to, "confidence": 0.9},
-                "continues": {"choice": continues, "confidence": 0.9}}
+                "continues": {"choice": continues, "confidence": 0.9},
+                "by_lyrics": {"noul": 0.05}, "by_ranking": {"noul": ranking},
+                "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05}}
 
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
@@ -92,9 +97,14 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     assert looked_up["intent"] == "lookup"
     assert looked_up["lookup_status"] == "ambiguous"
     assert looked_up["fast_mode"] is True
+    # 미지원 조건이면 lookup이어도 그 턴만 classify로 넘겨 "못 찾아요" 안내를 받게 한다.
+    unsupported = send("아이유 노래 중 잘 모르는 곡만")
+    assert unsupported["intent"] == "recommend"
+    assert unsupported["recommend_unsupported_condition"] is True
 
-    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘"]
-    assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘"]
+    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "아이유 노래 중 잘 모르는 곡만"]
+    assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘",
+                         "아이유 노래 중 잘 모르는 곡만"]
     # 임베딩은 Jev 답을 기다리지 않고 후보마다 미리 출발한다("좀 더 신나게" 턴은 new/continue/repeat 후보 3개).
     assert {"좀 더 신나게", "90년대 잔잔한 힙합 좀 더 신나게", "90년대 잔잔한 힙합"} <= set(embedded)
     # 검색에는 Jev 답에 맞는 후보의 벡터가 쓰인다. 장르·연도는 고속 모드 전 classify가 남긴

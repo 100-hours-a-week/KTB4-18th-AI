@@ -258,6 +258,18 @@ def embed_candidates(parts_by_choice: dict[str, list[str]]) -> dict[str, Future]
     return {query: _embed_pool.submit(embed_query, client, query) for query in queries}
 
 
+# NOTE: 미지원 문장은 가장 낮아도 0.93이었고, 유일한 오탐 "생일 노래 추천해줘"는 주제 기준 0.62였다.
+# 오탐이어도 classify가 지원 여부를 다시 판단해 느려질 뿐 틀리진 않지만, 0.7로 두면 그마저 줄어든다.
+UNSUPPORTED_CONFIDENT = 0.7
+UNSUPPORTED_QUESTIONS = ("by_lyrics", "by_ranking", "by_number", "by_topic")
+
+
+def asks_unsupported(answers: dict) -> bool:
+    """가사·순위·정확한 수치·주제처럼 우리가 가진 정보로 고를 수 없는 기준을 요구하는가."""
+
+    return any(answers[name]["noul"] >= UNSUPPORTED_CONFIDENT for name in UNSUPPORTED_QUESTIONS)
+
+
 def resolve_intent(answers: dict) -> str:
     """Jev intent를 그대로 쓰되, 아티스트를 확신하거나 제목을 말한 게 분명하면 조회로 본다."""
 
