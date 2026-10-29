@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from backend.recommendation.fast import (
-    asks_unsupported, next_search_parts, pattern_year_range, resolve_years, year_range,
+    asks_unsupported, next_search_parts, pattern_year_range, requested_count, resolve_years, year_range,
 )
 
 
@@ -93,6 +93,22 @@ def test_next_search_parts_without_previous_starts_new():
 )
 def test_asks_unsupported(scores, expected):
     assert asks_unsupported({name: {"noul": value} for name, value in scores.items()}) is expected
+
+
+@pytest.mark.parametrize(
+    ("choice", "confidence", "expected"),
+    [
+        ("none", 0.9, None),
+        ("2", 0.9, 2),
+        ("more", 0.9, 6),
+        ("2", 0.8, 2),     # 기준(COUNT_CONFIDENT)과 같으면 채택
+        ("2", 0.79, None),  # 기준 바로 아래면 거름
+        ("1", 0.57, None),  # "영어 이메일 하나 써주고"가 곡 수로 새던 수준
+    ],
+)
+def test_requested_count(choice, confidence, expected):
+    # 6곡 이상은 최대치(5)+1로 넘겨 track_limit은 5곡으로 자르고 count_notice는 최대 안내를 낸다.
+    assert requested_count({"choice": choice, "confidence": confidence}) == expected
 
 
 def test_year_range_treats_this_year_as_open_end():

@@ -47,7 +47,7 @@ def chat(body: ChatRequest) -> StreamingResponse:
 
     if result.kind == "fast":
         return StreamingResponse(
-            stream_fast_answer(result.text, result.tracks, thread_id=str(body.thread_id)),
+            stream_fast_answer(result.text, result.tracks, result.hints, thread_id=str(body.thread_id)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

@@ -62,6 +62,16 @@ def test_fast_answer_records_emitted_cards():
     assert any(event.startswith("event: tracks\n") for event in events)
 
 
+def test_fast_answer_adds_count_notice():
+    from backend.chat.answer import AnswerHints
+
+    events = list(streaming.stream_fast_answer("고속 모드로 추천한 음악이에요.", [track(1)],
+                                               AnswerHints(requested_count=6)))
+    text = json.loads(events[0].split("data: ", 1)[1])["delta"]
+    # 6곡 이상을 요청하면 최대 안내, 1곡밖에 못 찾았으면 실제 수 안내가 고정 문구 뒤에 붙는다.
+    assert text == "고속 모드로 추천한 음악이에요. 한 번에 최대 5곡까지 보여드릴 수 있어요. 찾은 곡은 1곡이에요."
+
+
 def test_search_does_not_mark_unsent_cards_as_shown(monkeypatch):
     calls = []
     monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())

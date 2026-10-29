@@ -53,6 +53,8 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
                 "year_from": {"choice": year_from, "confidence": 0.9},
                 "year_to": {"choice": year_to, "confidence": 0.9},
                 "continues": {"choice": continues, "confidence": 0.9},
+                # "90년대 잔잔한 힙합"만 2곡을 요청한 것으로 둔다.
+                "requested_count": {"choice": "2" if message == "90년대 잔잔한 힙합" else "none", "confidence": 0.9},
                 "by_lyrics": {"noul": 0.05}, "by_ranking": {"noul": ranking},
                 "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05}}
 
@@ -65,7 +67,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         return [text]
 
     def vector_recommendation(vector, **kwargs):
-        searched.append((vector[0], kwargs["genres"], kwargs["min_year"], kwargs["max_year"]))
+        searched.append((vector[0], kwargs["genres"], kwargs["min_year"], kwargs["max_year"], kwargs["k"]))
         return []
 
     monkeypatch.setattr(nodes, "classify", classify)
@@ -109,9 +111,10 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     assert {"좀 더 신나게", "90년대 잔잔한 힙합 좀 더 신나게", "90년대 잔잔한 힙합"} <= set(embedded)
     # 검색에는 Jev 답에 맞는 후보의 벡터가 쓰인다. 장르·연도는 고속 모드 전 classify가 남긴
     # 장르(Pop) 대신 Jev가 고른 값이다.
+    # 곡 수도 Jev 답으로 매 턴 채운다. 2곡 요청 다음 턴은 이어받지 않고 기본 5곡이다.
     assert searched == [
-        ("90년대 잔잔한 힙합", ["Hip-Hop"], 1990, 1999),
-        ("90년대 잔잔한 힙합 좀 더 신나게", None, None, None),
+        ("90년대 잔잔한 힙합", ["Hip-Hop"], 1990, 1999, 2),
+        ("90년대 잔잔한 힙합 좀 더 신나게", None, None, None, 5),
     ]
 
 

@@ -13,6 +13,7 @@ from datetime import date
 
 from backend.providers.jev import decide
 from backend.providers.openrouter import get_embedding_client
+from backend.recommendation.counts import MAX_TRACK_COUNT, track_limit
 from backend.recommendation.embedding import embed_query
 from backend.recommendation.intent import known_genres
 from backend.recommendation.retrieval import lookup_tracks_db, seed_artist_titles_db, seed_artists_db
@@ -270,6 +271,28 @@ def asks_unsupported(answers: dict) -> bool:
     return any(answers[name]["noul"] >= UNSUPPORTED_CONFIDENT for name in UNSUPPORTED_QUESTIONS)
 
 
+# NOTE: "2곡만", "한 곡만", "20곡"처럼 실제로 곡 수를 말하면 확신이 1.0이고, "영어 이메일 하나 써주고"·
+# "드라마 하나 추천해주고"의 "하나"가 곡 수로 새는 경우는 0.51~0.57이었다. 지시문에 이메일·드라마를
+# 직접 적어 막으려 하자 오히려 0.63~0.86으로 더 샜다. 그래서 문구 대신 기준을 높게 둔다.
+# "두세 곡만"(0.44~0.54)은 기본 곡 수로 간다.
+COUNT_CONFIDENT = 0.8
+
+
+def requested_count(answer: dict) -> int | None:
+    """Jev 곡 수 답을 classify의 requested_count와 같은 모양으로 바꾼다. 말하지 않았거나 자신 없으면 None.
+
+    6곡 이상(more)은 MAX_TRACK_COUNT + 1로 넘겨, track_limit()이 최대치로 자르고 count_notice()가
+    "한 번에 최대 N곡까지" 안내를 내게 한다.
+    """
+
+    choice = answer["choice"]
+    if choice == "none" or answer["confidence"] < COUNT_CONFIDENT:
+        return None
+    if choice == "more":
+        return MAX_TRACK_COUNT + 1
+    return int(choice)
+
+
 def resolve_intent(answers: dict) -> str:
     """Jev intent를 그대로 쓰되, 아티스트를 확신하거나 제목을 말한 게 분명하면 조회로 본다."""
 
@@ -304,20 +327,22 @@ def find_lookup_rows(messages: list[str], answers: dict, shown_ids: set[int]) ->
     """1단계 답으로 조회할 곡을 찾는다. classify에 맡겨야 하면 None을 돌려준다.
 
     제목을 콕 집은 조회는 이전에 보여준 곡이어도 다시 보여주고, 아티스트만 말한
-    "폭넓은" 조회만 턴 간 중복을 뺀다(lookup_node와 같은 정책).
+    "폭넓은" 조회만 턴 간 중복을 뺀다(lookup_node와 같은 정책). 곡 수는 lookup_node처럼
+    track_limit()으로 정한다.
     """
 
     artist = answers["artist"]["choice"]
     if artist == "none" or answers["artist"]["confidence"] < ARTIST_USABLE:
         return None
+    limit = track_limit(requested_count(answers["requested_count"]))
 
     if answers["has_title"]["noul"] < TITLE_MAYBE:
-        return lookup_tracks_db(seed_artist=artist, exclude_ids=shown_ids) or None
+        return lookup_tracks_db(seed_artist=artist, exclude_ids=shown_ids, limit=limit) or None
 
     titles = seed_artist_titles_db(artist)
     found = match_title(messages[-1], titles)
     if found:
-        return lookup_tracks_db(song_title=found, seed_artist=artist) or None
+        return lookup_tracks_db(song_title=found, seed_artist=artist, limit=limit) or None
 
     song = decide(jev_state(messages), {"song": {
         "type": "choice",
@@ -328,5 +353,5 @@ def find_lookup_rows(messages: list[str], answers: dict, shown_ids: set[int]) ->
     if song["confidence"] < SONG_CONFIDENT:
         return None
     if song["choice"] == "none":
-        return lookup_tracks_db(seed_artist=artist, exclude_ids=shown_ids) or None
-    return lookup_tracks_db(song_title=titles[int(song["choice"][1:])], seed_artist=artist) or None
+        return lookup_tracks_db(seed_artist=artist, exclude_ids=shown_ids, limit=limit) or None
+    return lookup_tracks_db(song_title=titles[int(song["choice"][1:])], seed_artist=artist, limit=limit) or None

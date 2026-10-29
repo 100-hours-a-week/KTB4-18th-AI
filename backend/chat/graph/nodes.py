@@ -13,7 +13,7 @@ from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
     artist_question, asks_unsupported, candidate_parts, embed_candidates, find_lookup_rows, genre_filter,
-    genre_question, jev_state, resolve_intent, resolve_years, year_questions,
+    genre_question, jev_state, requested_count, resolve_intent, resolve_years, year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -71,6 +71,17 @@ JEV_QUESTIONS = {
             "new": "이번 메시지만으로 원하는 노래를 알 수 있는 새 요청(주제가 바뀐 경우 포함)",
             "continue": "이전 추천 요청의 분위기·상황을 이어받아 조건을 더하거나 바꿈(예: '좀 더 신나게', '힙합으로')",
             "repeat": "새 조건 없이 같은 조건으로 다시 달라는 요청(예: '다른 곡으로 더 줘', '하나 더')",
+        },
+    },
+    # NOTE: 곡 수는 최대 5곡(counts.MAX_TRACK_COUNT)이라 선택지가 작다. 처음엔 1~10으로 물어 "20곡"이 10으로
+    # 잘렸고, "영어 이메일 하나 써주고"의 "하나"가 1곡으로 샜다. 6곡 이상은 more 하나로 묶는다.
+    "requested_count": {
+        "type": "choice",
+        "instructions": "음악 외 요청 부분은 무시하고, 사용자가 이번 메시지에서 원하는 노래 곡 수",
+        "criteria": {
+            "none": "곡 수를 말하지 않음",
+            "1": "1곡", "2": "2곡", "3": "3곡", "4": "4곡", "5": "5곡",
+            "more": "6곡 이상",
         },
     },
     # NOTE: 미지원 조건을 "분위기·상황으로 바꿔 읽을 수 없는 조건을 요구하는가" 하나로 물었을 땐 Jev가
@@ -147,6 +158,8 @@ def jev_node(state: RecommendationState) -> dict:
         return {"jev_failed": True}
 
     min_year, max_year = resolve_years(state["message"], answers)
+    # NOTE: 곡 수도 매 턴 채운다. 안 채우면 고속 모드 전 classify 턴의 "2곡만"이 새어 들어온다.
+    count = requested_count(answers["requested_count"])
     result = {
         "jev_failed": False,
         "jev_unsupported": False,
@@ -157,6 +170,7 @@ def jev_node(state: RecommendationState) -> dict:
         "recommend_genres": genre_filter(answers["genre"]),
         "recommend_min_year": min_year,
         "recommend_max_year": max_year,
+        "requested_count": count,
     }
     if intent == "recommend":
         parts = candidates[answers["continues"]["choice"]]
@@ -173,13 +187,11 @@ def jev_node(state: RecommendationState) -> dict:
                 preview_url=row.preview_url,
                 store_url=row.store_url,
             )
-            for row in rows[:5]
+            for row in rows[:track_limit(count)]
         ]
         # NOTE: 보여준 곡(shown_track_ids)은 lookup_node와 같이 SSE로 카드를 보낼 때 기록한다.
         result |= {"lookup_status": "found", "lookup_tracks": tracks}
     return result
-
-
 
 
 def embed_node(state: RecommendationState) -> dict:

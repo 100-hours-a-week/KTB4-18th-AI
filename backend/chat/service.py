@@ -101,7 +101,8 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         if not result["recommend_has_enough_info"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_insufficient_info"])
         if fast_mode:
-            return ChatOutcome(kind="fast", tracks=result["tracks"], text=FAST_RECOMMEND_TEXT)
+            return ChatOutcome(kind="fast", tracks=result["tracks"], text=FAST_RECOMMEND_TEXT,
+                               hints=AnswerHints.from_classification(result))
         return ChatOutcome(
             kind="recommend", client=client, tracks=result["tracks"],
             query=result["recommend_query"],
@@ -119,7 +120,8 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         status = result["lookup_status"]
         if status == "found":
             if fast_mode:
-                return ChatOutcome(kind="fast", tracks=result["lookup_tracks"], text=FAST_LOOKUP_TEXT)
+                return ChatOutcome(kind="fast", tracks=result["lookup_tracks"], text=FAST_LOOKUP_TEXT,
+                                   hints=AnswerHints.from_classification(result))
             return ChatOutcome(
                 kind="lookup", client=client, tracks=result["lookup_tracks"],
                 query=result["recommend_query"],
