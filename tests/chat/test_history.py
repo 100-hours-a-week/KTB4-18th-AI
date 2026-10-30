@@ -50,6 +50,28 @@ def test_only_emitted_cards_update_history(monkeypatch, stream_answer, completed
     assert any(event.startswith("event: tracks\n") for event in events) is completed
 
 
+def test_fast_answer_records_emitted_cards():
+    thread = str(uuid4())
+    config = {"configurable": {"thread_id": thread}}
+    workflow.record_shown_tracks(thread, [track(1).model_dump()])
+    events = list(streaming.stream_fast_answer("고속 모드로 추천한 음악이에요.", [track(2)], thread_id=thread))
+    state = workflow.build_graph().get_state(config).values
+    # 고속 모드도 카드를 보낼 때 기록해야 다음 "다른 곡으로 더 줘"에서 이미 보여준 곡이 빠진다.
+    assert state["shown_track_ids"] == ["1", "2"]
+    assert state["recent_tracks"] == [{"rank": 1, "track_id": "2", "title": "song 2", "artist": "artist 2"}]
+    assert any(event.startswith("event: tracks\n") for event in events)
+
+
+def test_fast_answer_adds_count_notice():
+    from backend.chat.answer import AnswerHints
+
+    events = list(streaming.stream_fast_answer("고속 모드로 추천한 음악이에요.", [track(1)],
+                                               AnswerHints(requested_count=6)))
+    text = json.loads(events[0].split("data: ", 1)[1])["delta"]
+    # 6곡 이상을 요청하면 최대 안내, 1곡밖에 못 찾았으면 실제 수 안내가 고정 문구 뒤에 붙는다.
+    assert text == "고속 모드로 추천한 음악이에요. 한 번에 최대 5곡까지 보여드릴 수 있어요. 찾은 곡은 1곡이에요."
+
+
 def test_search_does_not_mark_unsent_cards_as_shown(monkeypatch):
     calls = []
     monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())

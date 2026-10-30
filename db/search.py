@@ -111,12 +111,19 @@ def lookup(
     artist: str = None,
     limit: int = 5,
     exclude_ids: set[int] = None,
+    seed_artist: str = None,
 ) -> list[TrackRow]:
-    """제목/아티스트 텍스트로 곡을 조회한다."""
+    """제목/아티스트 텍스트로 곡을 조회한다.
+
+    seed_artist는 고속 모드에서 Jev가 seed_artists() 목록 중 고른 값이다. 실제 artist
+    표기와 다를 수 있어서(seed "Baek Yerin" / 곡 "Yerin Baek") 정확히 같은 값으로 찾는다.
+    """
 
     stmt = select(TrackRow)
     if song_title:
         stmt = stmt.where(TrackRow.title.ilike(f"%{song_title}%"))
+    if seed_artist:
+        stmt = stmt.where(TrackRow.seed_artist == seed_artist)
     if artist:
         # NOTE: ilike(%artist%)는 짧은 아티스트명(예: "IU")이 "XIUMIN", "genius" 같은
         # 무관한 단어 안에 우연히 포함돼 걸리는 문제가 있어, 단어 경계(\y) 정규식으로 매칭한다.
@@ -178,5 +185,27 @@ def known_genres(session: Session, space: str = "gemini") -> list[str]:
         )
         .group_by(TrackRow.genre)
         .having(func.count() >= MIN_GENRE_TRACKS)
+    ).scalars().all()
+    return sorted(rows)
+
+
+def seed_artists(session: Session) -> list[str]:
+    """카탈로그를 모을 때 기준으로 삼은 아티스트 목록(정렬).
+
+    NOTE: 피처링 표기까지 합친 실제 artist 값은 2,700개가 넘어 Jev Choice(최대 255개)에
+    안 들어가지만, seed는 250명 정도라 한 번에 고를 수 있다.
+    """
+
+    rows = session.execute(
+        select(TrackRow.seed_artist).where(TrackRow.seed_artist.isnot(None)).distinct()
+    ).scalars().all()
+    return sorted(rows)
+
+
+def seed_artist_titles(session: Session, seed_artist: str) -> list[str]:
+    """seed 아티스트의 곡 제목 목록(중복 제거, 정렬)."""
+
+    rows = session.execute(
+        select(TrackRow.title).where(TrackRow.seed_artist == seed_artist).distinct()
     ).scalars().all()
     return sorted(rows)

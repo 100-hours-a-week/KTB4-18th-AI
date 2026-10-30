@@ -7,10 +7,13 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from langsmith import RunTree, trace, tracing_context
+from langsmith import Client, RunTree, trace, tracing_context
+from langsmith.schemas import LangSmithInfo
 from langchain_core.tracers.langchain import LangChainTracer
 
 from backend.observability import RequestTracingMiddleware, configure_tracing, record_usage
+from backend.chat.streaming import stream_fast_answer
+from db.types import Track
 
 
 @pytest.fixture
@@ -36,6 +39,28 @@ def test_agent_environment_and_langgraph_use_one_destination(traced_runs):
             assert run.session_name == "meomuneum-staging"
             assert run.agent_id is None and run.agent_environment is None
             tracer.on_chain_end({}, run_id=run.id)
+
+
+def test_fast_response_is_a_request_child_without_model_usage(traced_runs):
+    tracks = [Track(track_id="1", title="song", artist="artist", artwork_url=None,
+                    preview_url=None)]
+    client = Client(api_url="http://localhost:1984", auto_batch_tracing=False, info=LangSmithInfo())
+    try:
+        with tracing_context(enabled=True):
+            with trace("request", project_name="meomuneum-staging", client=client) as root:
+                events = list(stream_fast_answer("고속 모드로 추천한 음악이에요.", tracks))
+    finally:
+        client.close()
+
+    run = next(run for run in traced_runs if run.name == "고속 응답 전송")
+    assert run.parent_run_id == root.id
+    assert run.run_type == "chain"
+    assert run.inputs["track_count"] == 1
+    assert run.outputs == {"text": "고속 모드로 추천한 음악이에요."}
+    assert "usage_metadata" not in run.metadata
+    assert [event.split("\n", 1)[0] for event in events] == [
+        "event: text", "event: tracks", "event: done",
+    ]
 
 
 @pytest.mark.parametrize("events,expected", [

@@ -40,4 +40,4 @@ def test_lookup_forwards_count_to_database(monkeypatch):
     row = SimpleNamespace(track_id=1)
     monkeypatch.setattr(search, "lookup", lambda session, **kwargs: calls.append(kwargs) or [row])
     assert retrieval.lookup_tracks_db(artist="IU", limit=5, exclude_ids={2}) == [row]
-    assert calls == [{"song_title": None, "artist": "IU", "limit": 5, "exclude_ids": {2}}]
+    assert calls == [{"song_title": None, "artist": "IU", "limit": 5, "exclude_ids": {2}, "seed_artist": None}]
