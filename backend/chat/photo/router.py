@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
+from langsmith import get_current_run_tree
 
 from backend.chat.photo import service
 from backend.http.schemas import ErrorResponse
@@ -27,6 +28,11 @@ async def photo_chat(
     image: UploadFile, thread_id: UUID = Form(), request_id: UUID = Form(),
 ) -> StreamingResponse:
     """사진을 검증하고 적합 판정과 추천 결과를 순서대로 반환한다."""
+    run = get_current_run_tree()
+    if run is not None:
+        context = {"thread_id": str(thread_id), "request_id": str(request_id)}
+        run.add_inputs(context)
+        run.add_metadata(context)
     events, release_if_never_started = await service.open_photo_stream(image, str(thread_id), str(request_id))
     # NOTE: 연결이 먼저 끊겨 스트림이 시작되지 않으면 생성기 대신 응답 종료 작업이 슬롯을 반환한다.
     return StreamingResponse(events, media_type="text/event-stream",

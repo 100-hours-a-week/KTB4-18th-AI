@@ -5,8 +5,10 @@ import os
 from datetime import date
 
 from openai import OpenAI
+from langsmith import traceable
 
 from backend.core.errors import _model_unavailable
+from backend.observability import record_usage
 
 _genre_cache: list[str] | None = None
 
@@ -122,6 +124,7 @@ intent가 lookup이 아니면 lookup_song과 lookup_song_alt와 lookup_artist는
 """
 
 
+@traceable(name="의도 분류", run_type="llm", process_inputs=lambda values: {"conversation": values["messages"]})
 def classify(client: OpenAI, messages: list[str]) -> dict:
     """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 한 번에 추출한다."""
 
@@ -186,6 +189,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                 }
             },
         )
+        record_usage(getattr(response, "usage", None), os.environ["LLM_MODEL"])
         data = json.loads(response.output_text or "{}")
     except Exception as error:
         raise _model_unavailable() from error
