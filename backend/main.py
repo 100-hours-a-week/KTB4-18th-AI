@@ -53,3 +53,15 @@ def root() -> RedirectResponse:
     """로컬 테스트 UI로 이동한다."""
 
     return RedirectResponse(url="/app/")
+
+
+@app.get('/local/experiment', include_in_schema=False)
+def local_experiment():
+    """실험 서버에서만 UI가 실행 설정을 확인한다. 비밀값은 반환하지 않는다."""
+    import os
+    if os.getenv('LOCAL_INSPECTOR') != '1':
+        raise HTTPException(status_code=404)
+    from backend.recommendation.adapter import search_space
+    return {'workflow': 'agentic' if os.getenv('AGENTIC_CHAT') == '1' else 'baseline',
+            'search_space': search_space(), 'max_tool_stages': 2, 'jev': False,
+            'trace_delivery': 'live', 'photo': 'existing_pipeline'}

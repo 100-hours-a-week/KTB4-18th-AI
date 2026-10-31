@@ -16,6 +16,7 @@ class RecommendationState(TypedDict, total=False):
     # 생각해보니 config라는 방법을 배웠어서 그걸로 사용했다.
 
     # ── 입력 ──
+    agent_events: list[dict]
     message: str
     user_context: UserContext | None
 

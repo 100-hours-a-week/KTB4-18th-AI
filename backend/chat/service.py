@@ -64,7 +64,7 @@ class ChatOutcome:
     hints: AnswerHints = field(default_factory=AnswerHints)
 
 
-def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
+def prepare_recommendation(message: str, thread_id: str, *, on_event=None) -> ChatOutcome:
     """OpenAI client를 준비하고 추천 그래프를 실행해, intent·조건에 맞는
     ChatOutcome(무엇을 어떻게 스트리밍할지)을 만든다."""
 
@@ -80,7 +80,7 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
 
     result = build_graph().invoke(
         {"message": message, "messages": [message]},
-        config={"configurable": {"thread_id": thread_id, "client": client}},
+        config={"configurable": {"thread_id": thread_id, "client": client, "on_event": on_event}},
     )
 
     intent = result["intent"]

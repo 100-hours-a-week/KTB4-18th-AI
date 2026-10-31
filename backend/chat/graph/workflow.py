@@ -73,6 +73,15 @@ def build_graph(*, photo: bool = False):
     밖에서 그대로 처리한다.
     """
 
+    import os
+    if not photo and os.getenv("AGENTIC_CHAT") == "1":
+        from backend.chat.graph.agent import run_agent
+        agent = StateGraph(RecommendationState)
+        agent.add_node("search", run_agent)
+        agent.add_edge(START, "search")
+        agent.add_edge("search", END)
+        return agent.compile(checkpointer=_checkpointer)
+
     graph = StateGraph(RecommendationState)
 
     graph.add_node("classify", classify_node)
