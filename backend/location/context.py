@@ -103,6 +103,29 @@ def _visible_nature(
     return sorted(nearest.values(), key=lambda hit: hit.distance_m)
 
 
+def _kakao_name(doc: dict) -> str:
+    """카카오 장소 이름을 사용자 문장에 쓸 장소 이름으로 줄인다. 카카오 이름은 대개 "<장소> <시설·구간>"이다.
+    - 가게 지점: 끝 덩어리의 "점"만 뺀다. "투썸플레이스 세종호수공원점" → "세종호수공원"
+    - 그 밖: 끝 덩어리를 뺀다. "망원한강공원 배달존" → "망원한강공원", "경주역사유적지구 대릉원지구" → "경주역사유적지구"
+    - 한 덩어리면 그대로 둔다("롯데백화점"이 "롯데백화"가 되지 않게)"""
+    parts = doc["place_name"].split()
+    if len(parts) == 1:
+        return parts[0]
+    if _is_branch(parts[-1], doc["category_name"]):
+        return parts[-1][:-1]
+    return " ".join(parts[:-1])
+
+
+# 가게 분류는 음식점·가정,생활·서비스,산업·스포츠,레저 등에 흩어져 있어 반대로 지점이 아닌 "점"이 나오는 분류를 고른다
+# (예: "한양도성 순성길 조망점"은 여행 > 전망대, "관악산 호수공원분기점"은 스포츠,레저 > 등산 > 등산정보)
+KAKAO_NOT_BRANCH_CATEGORIES = ("여행", "스포츠,레저 > 등산")
+
+
+def _is_branch(last: str, category: str) -> bool:
+    """끝 덩어리가 가게 지점 이름인가. "의암공원 매점"처럼 "점"을 빼면 한 글자만 남는 단어는 지점이 아니다"""
+    return last.endswith("점") and len(last) > 2 and not category.startswith(KAKAO_NOT_BRANCH_CATEGORIES)
+
+
 def summarize_kakao(
     region: str | None, density: dict[str, dict], attractions: list[dict], parks: list[dict],
 ) -> PlaceSummary:
@@ -122,16 +145,16 @@ def summarize_kakao(
             if int(doc["distance"]) <= TRAIT_NEAR_M and kind not in KAKAO_TRAIT_NOISE:
                 traits.append(kind)  # attractions가 거리순이라 가까운 순으로 쌓인다
         else:
-            hits.append((tag, int(doc["distance"]), doc["place_name"]))
+            hits.append((tag, int(doc["distance"]), _kakao_name(doc)))
 
     for doc in parks:
         name, distance = doc["place_name"], int(doc["distance"])
         if any(w in name for w in KAKAO_WATERSIDE_WORDS):
-            # "한강공원잠실대교북단상류측계단 진출입로" 같은 시설 이름은 문장에 못 쓰니 강 이름만 남긴다
-            hits.append(("river", distance, "한강" if "한강" in name else None))
+            # "한강공원잠실대교북단상류측계단 진출입로"는 끝을 빼도 길게 남아서 한강은 강 이름만 쓴다
+            hits.append(("river", distance, "한강" if "한강" in name else _kakao_name(doc)))
         # "여행 > 공원", "여행 > 공원시설물"만 인정한다. "OO공원점" 같은 음식점·카페는 분류에서 걸러진다
         if doc["category_name"].startswith("여행 > 공원") and not any(w in name for w in KAKAO_SMALL_PARK_WORDS):
-            hits.append(("park", distance, name))
+            hits.append(("park", distance, _kakao_name(doc)))
 
     return PlaceSummary(
         region=region,
