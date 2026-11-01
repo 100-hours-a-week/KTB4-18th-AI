@@ -19,12 +19,17 @@ GUIDE_TEXT = (
 OUT_OF_SCOPE_TEXT = "죄송해요, 저는 음악 추천과 곡 정보 조회만 도와드릴 수 있어요."
 NOT_FOUND_TEXT = "요청하신 곡 정보를 찾지 못했어요. 곡 제목이나 아티스트명을 다시 확인해 주세요."
 CLARIFY_TEXT = {
+    "invalid_count": "곡 수는 1곡 이상으로 알려주세요. 예: '잔잔한 노래 2곡 추천해줘'",
     # NOTE: 채팅방을 나가면 대화 기억이 사라지고 추천곡만 히스토리에 남는 구조라,
     # 대화에 없는 내용을 가리키면 히스토리를 안내한다.
     "missing_reference": (
         "말씀하신 내용을 이 대화에서 찾지 못했어요. 채팅방을 나가면 이전 대화는 "
         "이어지지 않고, 추천받았던 곡은 히스토리에서 다시 확인하실 수 있어요. "
         "찾으시는 곡이나 분위기를 다시 알려주시면 도와드릴게요."
+    ),
+    "ambiguous_reference": (
+        "어떤 곡을 말씀하시는지 카드 순서나 곡 제목으로 알려주세요. "
+        "예: '두 번째 곡 다시 보여줘'"
     ),
     "lookup_ambiguous": (
         "어떤 곡이나 아티스트를 찾으시는지 조금 더 구체적으로 알려주세요. 예: '아이유 밤편지'"
@@ -38,13 +43,20 @@ CLARIFY_TEXT = {
         "연도로 말씀해 주시면 찾아드릴게요."
     ),
 }
+# NOTE: 고속 모드는 끄는 경로 없이, 채팅방을 새로 열면(thread_id가 바뀌면) 풀린다.
+FAST_MODE_ON_TEXT = (
+    "고속 모드를 켰어요. 이제부터 설명 없이 곡만 빠르게 보여드려요. "
+    "설명이 있는 일반 대화로 돌아가려면 채팅방을 새로 열어주세요."
+)
+FAST_RECOMMEND_TEXT = "고속 모드로 추천한 음악이에요."
+FAST_LOOKUP_TEXT = "고속 모드로 찾은 곡이에요."
 
 
 @dataclass
 class ChatOutcome:
     """prepare_recommendation의 결과. main.py가 이 kind를 보고 SSE 조립 방식을 고른다."""
 
-    kind: Literal["recommend", "lookup", "static"]
+    kind: Literal["recommend", "lookup", "static", "fast"]
     client: OpenAI | None = None
     tracks: list[Track] | None = None
     text: str | None = None
@@ -72,12 +84,25 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     )
 
     intent = result["intent"]
+    count = result.get("requested_count")
+    if intent in ("recommend", "lookup") and count is not None and count < 1:
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT["invalid_count"])
+
+    if intent == "fast_mode":
+        return ChatOutcome(kind="static", text=FAST_MODE_ON_TEXT)
+
+    # NOTE: 고속 모드도 분기는 일반 모드와 같고, 곡을 보여주는 경우에만 LLM 답변
+    # 생성 없이 고정 문구 + 곡 카드(kind="fast")로 내려준다.
+    fast_mode = result.get("fast_mode", False)
 
     if intent == "recommend":
         if result["recommend_unsupported_condition"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_unsupported_condition"])
         if not result["recommend_has_enough_info"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_insufficient_info"])
+        if fast_mode:
+            return ChatOutcome(kind="fast", tracks=result["tracks"], text=FAST_RECOMMEND_TEXT,
+                               hints=AnswerHints.from_classification(result))
         return ChatOutcome(
             kind="recommend", client=client, tracks=result["tracks"],
             query=result["recommend_query"],
@@ -88,11 +113,15 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
         return ChatOutcome(kind="static", text=GUIDE_TEXT)
 
     if intent == "clarify":
-        return ChatOutcome(kind="static", text=CLARIFY_TEXT["missing_reference"])
+        key = "ambiguous_reference" if result.get("recent_tracks") else "missing_reference"
+        return ChatOutcome(kind="static", text=CLARIFY_TEXT[key])
 
     if intent == "lookup":
         status = result["lookup_status"]
         if status == "found":
+            if fast_mode:
+                return ChatOutcome(kind="fast", tracks=result["lookup_tracks"], text=FAST_LOOKUP_TEXT,
+                                   hints=AnswerHints.from_classification(result))
             return ChatOutcome(
                 kind="lookup", client=client, tracks=result["lookup_tracks"],
                 query=result["recommend_query"],

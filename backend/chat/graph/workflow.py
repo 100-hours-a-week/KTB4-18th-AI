@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from backend.chat.graph.nodes import (
     classify_node,
     embed_node,
+    jev_node,
     lookup_node,
     search_node,
 )
@@ -16,12 +17,33 @@ from backend.chat.graph.state import RecommendationState
 
 # NOTE: 채팅방을 나가면 대화 기억도 사라져도 되는 요구사항(장기 저장 불필요)이라
 # DB 기반 checkpointer 대신 프로세스 메모리에만 저장하는 InMemorySaver를 쓴다.
-# 이 인스턴스와 컴파일된 그래프는 요청마다 새로 만들면 안 되고, 서버가 떠
-# 있는 동안 한 번만 만들어져 재사용돼야 thread_id별 기억이 실제로 유지된다.
+# 그래프를 다시 구성해도 thread_id별 기억이 이어지도록 이 저장소 인스턴스는 공유한다.
 # NOTE: InMemorySaver는 프로세스 메모리라서, 서버가 여러 워커/인스턴스로 뜨면
 # 같은 thread_id 요청이 다른 프로세스로 갈 수 있어 기억이 안 보일 수 있다.
 # 지금 규모에선 괜찮지만 배포 구조가 바뀌면(워커 여러 개, 여러 대) 재검토할 것.
 _checkpointer = InMemorySaver()
+
+
+def route_entry(state: RecommendationState) -> str:
+    """고속 모드가 켜진 대화면 classify(LLM) 대신 jev로 들어간다."""
+
+    return "jev" if state.get("fast_mode") else "classify"
+
+
+def route_by_jev(state: RecommendationState) -> str:
+    """추천은 jev_node가 Jev와 동시에 임베딩까지 해뒀으니 바로 검색으로 보낸다. 조회는 jev_node가
+    곡을 찾았으면 끝내고, 못 찾았으면 제목·아티스트 추출을 위해 classify로 보낸다.
+    guide/out_of_scope는 고정 안내라 끝낸다. Jev가 실패했거나 미지원 조건을 감지했으면 classify로 보낸다."""
+
+    if state["jev_failed"] or state["jev_unsupported"]:
+        return "classify"
+    intent = state["intent"]
+    if intent == "recommend":
+        # 미지원이 확실해 jev_node가 바로 미지원으로 정했으면 검색 없이 끝낸다(안내는 prepare_recommendation).
+        return END if state["recommend_unsupported_condition"] else "search"
+    if intent == "lookup":
+        return END if state["lookup_status"] == "found" else "classify"
+    return END
 
 
 def route_by_intent(state: RecommendationState) -> str:
@@ -33,6 +55,9 @@ def route_by_intent(state: RecommendationState) -> str:
     """
 
     intent = state["intent"]
+    count = state.get("requested_count")
+    if intent in ("recommend", "lookup") and count is not None and count < 1:
+        return END
     if intent == "recommend":
         if state["recommend_unsupported_condition"] or not state["recommend_has_enough_info"]:
             return END
@@ -54,14 +79,38 @@ def build_graph(*, photo: bool = False):
     graph.add_node("embed", embed_node)
     graph.add_node("search", search_node)
     graph.add_node("lookup", lookup_node)
+    graph.add_node("jev", jev_node)
 
     # NOTE: 사진은 VLM이 만든 검색 조건으로 진입하므로 텍스트 의도 분류를 생략한다.
-    graph.add_edge(START, "embed" if photo else "classify")
+    if photo:
+        graph.add_edge(START, "embed")
+    else:
+        graph.add_conditional_edges(START, route_entry, {"classify": "classify", "jev": "jev"})
     graph.add_conditional_edges(
         "classify", route_by_intent, {"embed": "embed", "lookup": "lookup", END: END},
+    )
+    graph.add_conditional_edges(
+        "jev", route_by_jev, {"search": "search", "classify": "classify", END: END},
     )
     graph.add_edge("embed", "search")
     graph.add_edge("search", END)
     graph.add_edge("lookup", END)
 
     return graph.compile(checkpointer=_checkpointer)
+
+
+def record_shown_tracks(thread_id: str, tracks: list[dict]) -> None:
+    """검색 성공이 아니라 SSE 카드 전송 시점에 최근 목록과 중복 제외 ID를 저장한다."""
+    if not tracks:
+        return
+    build_graph().update_state(
+        {"configurable": {"thread_id": thread_id}},
+        {"shown_track_ids": [track["track_id"] for track in tracks],
+         "recent_tracks": [
+             {"rank": rank, "track_id": track["track_id"],
+              "title": track["title"], "artist": track["artist"]}
+             for rank, track in enumerate(tracks, start=1)
+         ]},
+        # 검색·조회 모두 종료된 상태를 갱신하며 후속 노드를 예약하지 않는다.
+        as_node="search",
+    )
