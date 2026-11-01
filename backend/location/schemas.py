@@ -1,6 +1,7 @@
 """위치 컨텍스트와 위치 추천 API 스키마. 장소 공급자(카카오·Google·OSM)와 관계없이 같은 형식을 쓴다."""
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,9 +62,12 @@ class LocationRecommendationRequest(BaseModel):
     """새 격자에 들어왔다고 FE·BE가 판단한 좌표. 표시 조건(10분 주기·하루 3회 등)은 FE·BE가 맡는다"""
 
     model_config = ConfigDict(extra="forbid")
+    # BE는 실패 시 같은 request_id로 1회 재시도한다. 재시도를 막지 않도록 중복 차단은 하지 않고 로그에만 쓴다
+    request_id: UUID
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
 
 
 class LocationRecommendationResponse(BaseModel):
+    message: str  # 추천 곡과 함께 보여줄 짧은 문장. 곡이 정해지기 전에 만들어 곡 이야기는 없다
     tracks: list[Track]  # V1·V2와 같은 공통 track 객체, 0~5개

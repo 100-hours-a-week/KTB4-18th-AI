@@ -15,9 +15,11 @@ from backend.main import app
 from db.types import Track
 
 URL = "/v1/location/recommendations"
-HAEUNDAE = {"latitude": 35.15871, "longitude": 129.16042}
+REQUEST_ID = "550e8400-e29b-41d4-a716-446655440000"
+HAEUNDAE = {"request_id": REQUEST_ID, "latitude": 35.15871, "longitude": 129.16042}
+MESSAGE = "맑은 오후 해운대네요. 파도 소리와 함께 들어 보세요."
 # calls 픽스처가 가짜로 바꾸기 전의 실제 함수. LLM 오류 분기를 검증할 때 되돌려 쓴다
-REAL_MUSIC_QUERY = service._music_query
+REAL_LOCATION_QUERY = service._location_query
 
 
 def kakao_raw(food_count=300):
@@ -62,25 +64,25 @@ def calls(monkeypatch):
     monkeypatch.setattr(service.osm, "available", lambda: state["osm"] is not None)
     monkeypatch.setattr(service.osm, "measure", lambda _lat, _lng: state["osm"])
 
-    def music_query(ctx):
+    def location_query(ctx):
         state["contexts"].append(ctx)
-        return "맑은 오후 바닷가에서 듣기 좋은 노래"
+        return LocationQuery(music_query="맑은 오후 바닷가에서 듣기 좋은 노래", mood=["청량한"], message=MESSAGE)
 
     def search(query):
         state["searched"].append(query)
         return [track()]
 
-    monkeypatch.setattr(service, "_music_query", music_query)
+    monkeypatch.setattr(service, "_location_query", location_query)
     monkeypatch.setattr(service, "_search", search)
     return state
 
 
 @pytest.fixture
 def llm(monkeypatch):
-    """_music_query의 실제 분기를 타도록 키·모델을 넣고 llm_query만 바꿔 끼운다"""
+    """_location_query의 실제 분기를 타도록 키·모델을 넣고 llm_query만 바꿔 끼운다"""
     monkeypatch.setenv("OPENROUTER_LLM_API_KEY", "test-key")
     monkeypatch.setenv("LLM_MODEL", "test-model")
-    monkeypatch.setattr(service, "_music_query", REAL_MUSIC_QUERY)
+    monkeypatch.setattr(service, "_location_query", REAL_LOCATION_QUERY)
 
     def use(behavior):
         monkeypatch.setattr(service, "llm_query", lambda _client, _ctx: behavior())
@@ -91,11 +93,12 @@ def reason(response):
     return response.json()["details"]["reason"]
 
 
-def test_success_returns_only_tracks(calls):
+def test_success_returns_message_and_tracks(calls):
     response = TestClient(app).post(URL, json=HAEUNDAE)
 
     assert response.status_code == 200
-    assert response.json() == {"tracks": [track().model_dump()]}
+    assert response.json() == {"message": MESSAGE, "tracks": [track().model_dump()]}
+    assert calls["searched"] == ["맑은 오후 바닷가에서 듣기 좋은 노래"]
     ctx = calls["contexts"][0]
     assert ctx.provider == "kakao"
     assert [hit.kind for hit in ctx.nature] == ["sea"]
@@ -151,7 +154,7 @@ def test_relief_failure_skips_only_mountain(calls):
 
 def test_llm_not_configured_returns_model_unavailable(calls, monkeypatch):
     monkeypatch.delenv("OPENROUTER_LLM_API_KEY", raising=False)
-    monkeypatch.setattr(service, "_music_query", REAL_MUSIC_QUERY)
+    monkeypatch.setattr(service, "_location_query", REAL_LOCATION_QUERY)
 
     response = TestClient(app).post(URL, json=HAEUNDAE)
 
@@ -204,8 +207,10 @@ def test_request_over_time_limit_returns_timeout(calls, monkeypatch):
 
 
 @pytest.mark.parametrize("body", [
-    {"latitude": 95, "longitude": 129.1},
-    {"latitude": 35.1},
+    {**HAEUNDAE, "latitude": 95},
+    {"request_id": REQUEST_ID, "latitude": 35.1},
+    {"latitude": 35.15871, "longitude": 129.16042},
+    {**HAEUNDAE, "request_id": "not-a-uuid"},
     {**HAEUNDAE, "exclude_track_ids": ["1"]},
 ])
 def test_invalid_request_is_rejected(calls, body):
@@ -220,6 +225,6 @@ def test_log_has_no_location(calls, caplog):
     with caplog.at_level(logging.INFO, logger="uvicorn.error"):
         TestClient(app).post(URL, json=HAEUNDAE)
 
-    assert "Location request: provider=kakao tracks=1" in caplog.text
-    for leaked in ("35.1", "129.1", "해운대", "바닷가"):
+    assert f"Location request: request_id={REQUEST_ID} provider=kakao tracks=1" in caplog.text
+    for leaked in ("35.1", "129.1", "해운대", "바닷가", MESSAGE):
         assert leaked not in caplog.text

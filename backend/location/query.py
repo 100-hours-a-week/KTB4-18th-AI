@@ -55,11 +55,13 @@ def template_query(ctx: LocationContext) -> str:
 
 
 class LocationQuery(BaseModel):
-    """LLM 출력. 곡이 정해지기 전에 만드는 검색 조건이다."""
+    """LLM 출력. 곡이 정해지기 전에 만드는 검색 조건과, 추천 곡과 함께 보여줄 문장이다."""
 
     model_config = ConfigDict(extra="forbid")
     music_query: str = Field(max_length=200)
     mood: list[str] = Field(max_length=4)
+    # 목표는 40자 안팎. 조금 넘었다고 503이 되지 않도록 상한은 넉넉히 둔다
+    message: str = Field(max_length=80)
 
 
 # 두 방식이 같이 쓰는 입력 해석 규칙
@@ -72,7 +74,11 @@ _COMMON_RULES = (
     "붐빔을 단정하는 표현을 쓰지 마세요. quiet인데 북적이는처럼 측정값과 정반대인 분위기도 만들지 마세요. "
     "weather가 null이면 날씨를 측정하지 못한 것이니 날씨를 언급하지 마세요. "
     "place_traits는 근처 장소 유형이며 분위기 힌트로만 쓰세요. "
-    "mood에는 music_query와 일치하는 분위기 단어를 1~4개 넣으세요."
+    "mood에는 music_query와 일치하는 분위기 단어를 1~4개 넣으세요. "
+    "message는 추천 곡 목록 위에 보여줄 한국어 문장으로, 40자 안팎으로 쓰세요"
+    "(예: \"비 오는 저녁 망원한강공원이네요. 강바람 맞으며 들어 보세요.\"). "
+    "region의 동 이름이나 nature·place_traits의 장소 이름을 자연스럽게 넣으세요. 주소 전체를 쓰지는 마세요. "
+    "곡은 아직 정해지지 않았으니 곡 이야기는 하지 마세요."
 )
 INSTRUCTIONS = {
     # V1 classify의 recommend_query 규칙(backend/recommendation/intent.py)을 따른다
@@ -82,8 +88,9 @@ INSTRUCTIONS = {
         "music_query는 원하는 음악을 묘사하는 명사구로 쓰세요(예: \"퇴근길에 듣기 좋은 잔잔한 노래\", "
         "\"비 오는 밤 바닷가에서 듣기 좋은 감성적인 노래\"). \"추천해줘\" 같은 요청 표현은 넣지 마세요. "
         "장소·날씨·시간대의 상황과 분위기를 담고, 악기·음색·템포 같은 소리 묘사는 넣지 마세요. "
-        "이 장소를 다른 곳과 구별 짓는 특징(바다, 산, 강, 업무지구, 테마거리 등)이 있으면 하나 이상 살리고, "
-        "name이 있는 지형은 이름을 그대로 써도 됩니다. 100자 이내로 쓰세요. " + _COMMON_RULES
+        "이 장소를 다른 곳과 구별 짓는 특징(바다, 산, 강, 업무지구, 테마거리 등)이 있으면 하나 이상 살리세요. "
+        # 고유명사는 검색 벡터를 분위기와 무관하게 움직이고 가사·이름 단어와 맞춰져서 message에만 쓴다
+        "지역명·장소 이름은 music_query에 쓰지 말고 message에만 쓰세요. 100자 이내로 쓰세요. " + _COMMON_RULES
     ),
     "sound": (
         "사용자가 지금 있는 장소의 측정된 특징을 받아, 그 자리에서 듣기 좋은 음악을 찾기 위한 한국어 검색 문장을 만드세요. "

@@ -29,7 +29,7 @@ from backend.location import osm, sources
 from backend.location.context import (
     build_context, combine_kakao_osm, summarize_kakao, summarize_osm_nature, summarize_weather, weather_unknown,
 )
-from backend.location.query import llm_query
+from backend.location.query import LocationQuery, llm_query
 from backend.location.schemas import (
     LocationContext, LocationRecommendationRequest, LocationRecommendationResponse, PlaceSummary, Provider,
 )
@@ -88,13 +88,14 @@ def _places(raw: dict) -> tuple[PlaceSummary, Provider]:
     raise _error(503, "LOCATION_CONTEXT_UNAVAILABLE", "주변 장소 정보를 확인하지 못했습니다. 잠시 후 다시 시도하세요.")
 
 
-def _music_query(ctx: LocationContext) -> str:
+def _location_query(ctx: LocationContext) -> LocationQuery:
+    """LLM 1회로 검색어와 응답 문장(message)을 함께 만든다"""
     key = os.getenv("OPENROUTER_LLM_API_KEY", "").strip()
     if not key or key.startswith("<") or not os.getenv("LLM_MODEL", "").strip():
         raise _model_unavailable()
     client = OpenAI(api_key=key, base_url=OPENROUTER_BASE_URL, timeout=LLM_TIMEOUT_S, max_retries=0)
     try:
-        return llm_query(client, ctx).music_query
+        return llm_query(client, ctx)
     except openai.APIError as error:  # 공급자 오류·연결 실패·시간 초과
         logger.warning("Location query model unavailable: error=%s", type(error).__name__)
         raise _model_unavailable() from error
@@ -106,7 +107,7 @@ def _search(query: str) -> list:
     return vector_recommendation(embed_query(get_embedding_client(), query))
 
 
-async def _recommend(lat: float, lng: float) -> tuple[list, Provider, dict]:
+async def _recommend(lat: float, lng: float) -> tuple[LocationQuery, list, Provider, dict]:
     started = time.monotonic()
     raw = await _gather_sources(lat, lng)
     timings = {"sources_ms": round((time.monotonic() - started) * 1000)}
@@ -119,26 +120,29 @@ async def _recommend(lat: float, lng: float) -> tuple[list, Provider, dict]:
     ctx = build_context(provider, places, weather)
 
     # OpenAI SDK·DB 호출은 동기 함수라 스레드에서 돌린다
-    query = await asyncio.to_thread(_music_query, ctx)
+    query = await asyncio.to_thread(_location_query, ctx)
     timings["query_ms"] = round((time.monotonic() - started) * 1000)
-    tracks = await asyncio.to_thread(_search, query)
-    return tracks, provider, timings
+    tracks = await asyncio.to_thread(_search, query.music_query)
+    return query, tracks, provider, timings
 
 
 async def recommend(request: LocationRecommendationRequest) -> LocationRecommendationResponse:
     started = time.monotonic()
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
-            tracks, provider, timings = await _recommend(request.latitude, request.longitude)
+            query, tracks, provider, timings = await _recommend(request.latitude, request.longitude)
     except TimeoutError as error:
         # NOTE: 스레드에서 돌던 LLM·DB 호출은 취소되지 않고 끝까지 실행된 뒤 버려진다.
-        logger.warning("Location request timed out: elapsed_ms=%d", round((time.monotonic() - started) * 1000))
+        logger.warning(
+            "Location request timed out: request_id=%s elapsed_ms=%d",
+            request.request_id, round((time.monotonic() - started) * 1000),
+        )
         raise _error(503, "LOCATION_TIMEOUT", "위치 추천 처리 시간이 초과되었습니다. 잠시 후 다시 시도하세요.") from error
 
-    # NOTE: 좌표·지역명·검색어는 위치를 드러내므로 남기지 않는다. 경로·결과·소요 시간만 기록한다.
+    # NOTE: 좌표·지역명·검색어·message는 위치를 드러내므로 남기지 않는다. 경로·결과·소요 시간만 기록한다.
     logger.info(
-        "Location request: provider=%s tracks=%d sources_ms=%d query_ms=%d total_ms=%d",
-        provider, len(tracks), timings["sources_ms"], timings["query_ms"],
+        "Location request: request_id=%s provider=%s tracks=%d sources_ms=%d query_ms=%d total_ms=%d",
+        request.request_id, provider, len(tracks), timings["sources_ms"], timings["query_ms"],
         round((time.monotonic() - started) * 1000),
     )
-    return LocationRecommendationResponse(tracks=tracks)
+    return LocationRecommendationResponse(message=query.message, tracks=tracks)
