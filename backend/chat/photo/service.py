@@ -8,6 +8,7 @@ import asyncio
 import logging
 import threading
 import time
+from contextlib import aclosing
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -15,7 +16,7 @@ import httpx
 from fastapi import HTTPException, UploadFile
 
 from backend.chat.graph.workflow import build_graph, record_shown_tracks
-from backend.chat.photo import image, vlm
+from backend.chat.photo import image, vlm, search
 from backend.chat.photo.schemas import Scene
 from backend.chat.streaming import sse
 from backend.core.errors import _error
@@ -23,7 +24,7 @@ from backend.core.errors import _error
 # NOTE: uvicorn 로거를 써야 별도 설정 없이 INFO 줄이 컨테이너 로그에 남는다(STT와 같은 방식).
 logger = logging.getLogger("uvicorn.error")
 # TODO: 처리 슬롯·중복 기록·채팅별 진행 여부는 프로세스 단위다. 다중 워커 배포 전 BE·공유 저장소로 옮긴다.
-# NOTE: 슬롯은 이미지 디코딩 전에 잡고, 시간 초과 뒤 계속되는 검색 작업이 끝날 때 반환한다. 대기열은 두지 않는다.
+# NOTE: 슬롯은 디코딩 전 예약하고 비동기 호출 정리 후 반환한다. 대기열은 두지 않는다.
 MAX_CONCURRENT = 2
 _slots = threading.BoundedSemaphore(MAX_CONCURRENT)
 _active_threads: set[str] = set()
@@ -36,16 +37,30 @@ REJECT_MESSAGES = {
 }
 
 
-def recommend_scene(scene: Scene, thread_id: str) -> list[dict]:
-    """사진 맥락을 메모리에 남기고 기존 임베딩·검색을 재사용한다."""
-    result = build_graph(photo=True).invoke({
-        "message": scene.music_query,
-        "messages": ["사진의 장소 맥락: " + scene.model_dump_json()],
-        "intent": "recommend", "recommend_query": scene.music_query,
-        "recommend_genres": None, "recommend_min_year": None, "recommend_max_year": None,
-        "requested_count": None,
-    }, config={"configurable": {"thread_id": thread_id}})
-    return [track.model_dump() for track in result["tracks"]]
+PHOTO_TIMEOUT_S = 45
+
+
+async def recommend_scene(scene: Scene, thread_id: str):
+    """완료된 검색만 대화에 반영하며 각 단계를 즉시 전달한다."""
+    yield 'status', {'stage': 'embedding_start'}
+    async with asyncio.timeout(search.EMBEDDING_TIMEOUT_S):
+        vector = await search.embed_photo_query(scene.music_query)
+    yield 'status', {'stage': 'embedding'}
+    graph = build_graph(photo=True)
+    config = {'configurable': {'thread_id': thread_id}}
+    state = graph.get_state(config).values
+    yield 'status', {'stage': 'search_start'}
+    async with asyncio.timeout(search.SEARCH_TIMEOUT_S):
+        tracks = await search.search_photo_tracks(vector, {int(tid) for tid in state.get('shown_track_ids', [])})
+    # 타임아웃·취소된 작업이 뒤늦게 대화 상태를 덮어쓰지 않도록 성공 후에만 저장한다.
+    graph.update_state(config, {
+        'message': scene.music_query, 'messages': ['사진의 장소 맥락: ' + scene.model_dump_json()],
+        'intent': 'recommend', 'recommend_query': scene.music_query,
+        'recommend_genres': None, 'recommend_min_year': None, 'recommend_max_year': None,
+        'requested_count': None, 'tracks': tracks,
+    }, as_node='search')
+    yield 'status', {'stage': 'tool_result', 'count': len(tracks)}
+    yield 'tracks', {'tracks': [track.model_dump() for track in tracks]}
 
 
 async def open_photo_stream(
@@ -60,7 +75,11 @@ async def open_photo_stream(
     if request_key in _requests:
         raise _error(409, "DUPLICATE_REQUEST", "이미 접수한 사진 요청입니다. 새 request_id로 요청하세요.")
     # NOTE: 같은 채팅의 사진 요청은 대화 상태가 섞이지 않게 하나씩 받는다. 사진·텍스트 동시 요청은 아직 막지 않는다.
-    if thread in _active_threads or not _slots.acquire(blocking=False):
+    if thread in _active_threads:
+        logger.warning("Photo request rejected: cause=thread_busy")
+        raise _error(409, "PHOTO_BUSY", "사진을 처리 중입니다. 완료 후 다시 시도하세요.")
+    if not _slots.acquire(blocking=False):
+        logger.warning("Photo request rejected: cause=capacity_full")
         raise _error(409, "PHOTO_BUSY", "사진을 처리 중입니다. 완료 후 다시 시도하세요.")
     _requests[request_key] = now
     # TODO: 최근 256건을 10분간만 보관한다. 공유·영속화는 정식 BE 계약 후 적용한다.
@@ -97,14 +116,15 @@ async def open_photo_stream(
     async def events() -> AsyncIterator[str]:
         """원본·분석 내용을 로그에 남기지 않고 단계별 상태를 전달한다."""
         job["started"] = True
-        worker = None
+        stage = "analyzing"
+        stage_started = time.monotonic()
         # NOTE: 분석 결과를 받기 전 실패만 새 실행으로 인정한다. 이후 실패는 과금·대화 상태 변경 가능성이 있어 새 ID를 요구한다.
         retryable = True
         started = time.monotonic()
         # NOTE: 연결이 끊겨 생성기가 닫히면 일반 예외 처리를 거치지 않으므로, 끝까지 응답한 경우에만 ok로 바꾼다.
         provider, outcome, status, error_type = None, "aborted", None, None
         try:
-            async with asyncio.timeout(45):
+            async with asyncio.timeout(PHOTO_TIMEOUT_S):
                 yield sse("status", {"stage": "analyzing"})
                 try:
                     scene, provider = await vlm.analyze_image(normalized)
@@ -128,11 +148,15 @@ async def open_photo_stream(
                 # 검색 결과를 모르는 시점의 문장이라 곡을 골랐다고 단정하는 문구를 붙이지 않는다.
                 yield sse("text", {"delta": scene.recommendation_context.strip()})
                 yield sse("status", {"stage": "searching"})
-                # NOTE: 시간 초과 후에도 SDK·DB 처리가 계속될 수 있어, 작업이 끝날 때 슬롯을 반환한다.
-                worker = asyncio.create_task(asyncio.to_thread(recommend_scene, scene, thread))
-                worker.add_done_callback(lambda task: (task.exception() if not task.cancelled() else None,
-                                                       release(allow_retry=False)))
-                tracks = await asyncio.shield(worker)
+                tracks = []
+                async with aclosing(recommend_scene(scene, thread)) as recommendation:
+                    async for event, data in recommendation:
+                        if event == 'status':
+                            logger.info('Photo stage: stage=%s elapsed_ms=%d', stage, round((time.monotonic()-stage_started)*1000))
+                            stage, stage_started = data['stage'], time.monotonic()
+                            yield sse(event, {**data, 'elapsed_ms': round((time.monotonic()-started)*1000)})
+                        else:
+                            tracks = data['tracks']
                 if not tracks:
                     yield sse("text", {"delta": "\n\n조건에 맞는 곡을 찾지 못했어요."})
                 record_shown_tracks(thread, tracks)
@@ -155,17 +179,19 @@ async def open_photo_stream(
                 reason, message = "PHOTO_TIMEOUT", "사진 처리 시간이 초과되었습니다. 잠시 후 다시 시도하세요."
             elif isinstance(error, HTTPException) and isinstance(error.detail, dict):
                 reason = error.detail.get("details", {}).get("reason", reason)
-                if reason in ("PHOTO_MODEL_NOT_CONFIGURED", "PHOTO_PROVIDER_NOT_CONFIGURED"):
+                if reason in ("PHOTO_MODEL_NOT_CONFIGURED", "PHOTO_PROVIDER_NOT_CONFIGURED", "MODEL_UNAVAILABLE", "MUSIC_CATALOG_UNAVAILABLE"):
                     message = error.detail["message"]
             outcome, error_type = reason, type(error).__name__
-            yield sse("error", {"detail": message, "reason": reason})
+            # 오류를 전송할 때는 호출 취소·연결 정리가 끝나 다음 요청을 받을 수 있다.
+            release(allow_retry=retryable)
+            yield sse("error", {"detail": message, "reason": reason, "stage": stage,
+                                "elapsed_ms": round((time.monotonic()-started)*1000)})
         finally:
-            if worker is None:
-                release(allow_retry=retryable)
+            release(allow_retry=retryable)
             # NOTE: 사진·분석 내용과 공급자 응답 본문은 남기지 않고 경로·결과·상태 코드·소요 시간만 기록한다.
             # 폴백을 쓴 요청은 vlm.analyze_image가 사유를 한 줄 더 남긴다.
             log = logger.info if error_type is None else logger.warning
-            log("Photo request: provider=%s outcome=%s status=%s error=%s elapsed_ms=%d",
-                provider, outcome, status, error_type, round((time.monotonic() - started) * 1000))
+            log("Photo request: provider=%s outcome=%s status=%s error=%s stage=%s elapsed_ms=%d",
+                provider, outcome, status, error_type, stage, round((time.monotonic() - started) * 1000))
 
     return events(), release_if_never_started

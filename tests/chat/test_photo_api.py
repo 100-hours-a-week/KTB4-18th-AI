@@ -35,6 +35,16 @@ def scene():
                        recommendation_context="사진에 보이는 나무에서 차분한 분위기가 느껴져요. 잔잔한 음악 위주로 찾아볼게요.")
 
 
+def result_stream(tracks):
+    async def run(*args):
+        yield 'tracks', {'tracks': tracks}
+    return run
+
+
+async def collect_recommendation(scene_value, thread):
+    return [data async for event, data in service.recommend_scene(scene_value, thread)]
+
+
 def png():
     output = io.BytesIO()
     Image.new("RGB", (40, 20), "green").save(output, "PNG")
@@ -104,9 +114,9 @@ def test_real_stream_searches_after_scene_and_reports_failure(monkeypatch):
         return scene(), "openrouter"
 
     monkeypatch.setattr(vlm, "analyze_image", analyze)
-    monkeypatch.setattr(service, "recommend_scene", lambda *_args: [Track(
+    monkeypatch.setattr(service, "recommend_scene", result_stream([Track(
         track_id="1", title="test", artist="test", artwork_url=None,
-        preview_url=None, store_url=None).model_dump()])
+        preview_url=None, store_url=None).model_dump()]))
     with TestClient(app) as client:
         body = {"thread_id": str(uuid4()), "request_id": str(uuid4())}
         response = client.post("/v1/chat/images", data=body, files={"image": ("x.jpg", jpeg(), "image/jpeg")})
@@ -118,7 +128,7 @@ def test_real_stream_searches_after_scene_and_reports_failure(monkeypatch):
         state = workflow.build_graph().get_state({"configurable": {"thread_id": body["thread_id"]}}).values
         assert state["recent_tracks"] == [{"rank": 1, "track_id": "1", "title": "test", "artist": "test"}]
 
-        monkeypatch.setattr(service, "recommend_scene", lambda *_args: [])
+        monkeypatch.setattr(service, "recommend_scene", result_stream([]))
         body["request_id"] = str(uuid4())
         empty = client.post("/v1/chat/images", data=body, files={"image": ("x.jpg", jpeg(), "image/jpeg")})
         assert empty.text.index(scene().recommendation_context) < empty.text.index("조건에 맞는 곡을 찾지 못했어요.")
@@ -172,30 +182,29 @@ def test_photo_graph_reuses_search_and_context_for_next_text(monkeypatch):
 
 
 def test_photo_search_needs_no_text_llm_settings(monkeypatch):
-    monkeypatch.delenv("LLM_MODEL", raising=False)
-    monkeypatch.delenv("OPENROUTER_LLM_API_KEY", raising=False)
-    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
-    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
-    track = Track(track_id="1", title="test", artist="test", artwork_url=None,
-                  preview_url=None, store_url=None)
-    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **_kwargs: [track])
-    result = service.recommend_scene(scene(), str(uuid4()))
-    assert result == [track.model_dump()]
-    assert "reason" not in result[0]
+    monkeypatch.delenv('LLM_MODEL', raising=False)
+    monkeypatch.delenv('OPENROUTER_LLM_API_KEY', raising=False)
+    async def embed(query): return [1.0]
+    track = Track(track_id='1', title='test', artist='test', artwork_url=None, preview_url=None, store_url=None)
+    async def retrieve(vector, exclude): return [track]
+    monkeypatch.setattr(service.search, 'embed_photo_query', embed)
+    monkeypatch.setattr(service.search, 'search_photo_tracks', retrieve)
+    events = asyncio.run(collect_recommendation(scene(), str(uuid4())))
+    assert events[-1] == {'tracks': [track.model_dump()]}
+    assert [e['stage'] for e in events[:-1]] == ['embedding_start', 'embedding', 'search_start', 'tool_result']
 
 
 def test_photo_resets_previous_text_count(monkeypatch):
-    """의도 분류를 생략하는 사진 검색에서도 이전 텍스트의 곡 수를 초기화한다."""
-    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
-    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
-    counts = []
-    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **kwargs: counts.append(kwargs["k"]) or [])
-    monkeypatch.setattr(nodes, "classify", lambda *_args: {"intent": "guide", "requested_count": 2})
+    async def embed(query): return [1.0]
+    async def retrieve(vector, exclude): return []
+    monkeypatch.setattr(service.search, 'embed_photo_query', embed)
+    monkeypatch.setattr(service.search, 'search_photo_tracks', retrieve)
     thread = str(uuid4())
-    workflow.build_graph().invoke({"messages": ["노래 2곡"]}, config={
-        "configurable": {"thread_id": thread, "client": object()}})
-    service.recommend_scene(scene(), thread)
-    assert counts == [5]
+    graph = workflow.build_graph(photo=True)
+    config = {'configurable': {'thread_id': thread}}
+    graph.update_state(config, {'requested_count': 2}, as_node='search')
+    asyncio.run(collect_recommendation(scene(), thread))
+    assert graph.get_state(config).values['requested_count'] is None
 
 
 def post_photo(client, body, data=None, mime="image/jpeg"):
@@ -329,7 +338,7 @@ def test_request_log_has_path_and_result_without_content(monkeypatch, caplog):
         response = httpx.Response(503, request=httpx.Request("POST", "https://test.invalid"))
         raise httpx.HTTPStatusError("cold", request=response.request, response=response)
 
-    monkeypatch.setattr(service, "recommend_scene", lambda *_args: [])
+    monkeypatch.setattr(service, "recommend_scene", result_stream([]))
     caplog.set_level("INFO", logger="uvicorn.error")
     with TestClient(app) as client:
         for analyze in (fallback_scene, cold_fallback):
@@ -359,3 +368,67 @@ def test_stream_closed_before_analysis_is_logged_as_aborted(monkeypatch, caplog)
     asyncio.run(first_event_then_close())
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:"))
     assert "provider=None outcome=aborted" in line
+
+
+@pytest.mark.parametrize('blocked_stage', ['embedding_start', 'search_start'])
+def test_timeout_cancels_stage_and_accepts_next_photo(monkeypatch, blocked_stage):
+    """오류를 받은 뒤 같은 대화의 새 요청이 409에 갇히지 않는다."""
+    from fastapi import UploadFile
+    monkeypatch.setattr(service.search, 'EMBEDDING_TIMEOUT_S', 0.02)
+    monkeypatch.setattr(service.search, 'SEARCH_TIMEOUT_S', 0.02)
+    async def analyze(_image): return scene(), 'openrouter'
+    monkeypatch.setattr(vlm, 'analyze_image', analyze)
+    async def run():
+        cancelled = asyncio.Event()
+        blocked = True
+        async def hang():
+            try: await asyncio.Event().wait()
+            finally: cancelled.set()
+        async def embed(query):
+            if blocked and blocked_stage == 'embedding_start': await hang()
+            return [1.0]
+        async def retrieve(vector, exclude):
+            if blocked and blocked_stage == 'search_start': await hang()
+            return []
+        monkeypatch.setattr(service.search, 'embed_photo_query', embed)
+        monkeypatch.setattr(service.search, 'search_photo_tracks', retrieve)
+        thread = str(uuid4())
+        async def request():
+            stream, _ = await service.open_photo_stream(UploadFile(io.BytesIO(jpeg()), filename='x.jpg'), thread, str(uuid4()))
+            return ''.join([event async for event in stream])
+        first = await request()
+        assert 'PHOTO_TIMEOUT' in first and f'"stage": "{blocked_stage}"' in first
+        assert cancelled.is_set()
+        assert_slots_released()
+        config = {'configurable': {'thread_id': thread}}
+        assert not workflow.build_graph(photo=True).get_state(config).values.get('messages')
+        blocked = False
+        second = await request()
+        assert 'event: done' in second and 'event: error' not in second
+        assert_slots_released()
+    asyncio.run(run())
+
+
+def test_disconnect_cancels_photo_search_and_releases_capacity(monkeypatch):
+    from fastapi import UploadFile
+    async def analyze(_image): return scene(), 'openrouter'
+    monkeypatch.setattr(vlm, 'analyze_image', analyze)
+    async def run():
+        searching, cancelled = asyncio.Event(), asyncio.Event()
+        async def embed(query): return [1.0]
+        async def retrieve(vector, exclude):
+            searching.set()
+            try: await asyncio.Event().wait()
+            finally: cancelled.set()
+        monkeypatch.setattr(service.search, 'embed_photo_query', embed)
+        monkeypatch.setattr(service.search, 'search_photo_tracks', retrieve)
+        stream, _ = await service.open_photo_stream(UploadFile(io.BytesIO(jpeg()), filename='x.jpg'), str(uuid4()), str(uuid4()))
+        async def consume():
+            async for _ in stream: pass
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(searching.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError): await task
+        assert cancelled.is_set()
+        assert_slots_released()
+    asyncio.run(run())

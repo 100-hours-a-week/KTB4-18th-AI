@@ -15,7 +15,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.20",
     "silero-vad-lite==0.2.1",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "uvicorn>=0.52.4",
 ]
 

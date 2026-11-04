@@ -21,13 +21,15 @@ def embed_query(client: OpenAI, message: str) -> list[float]:
         response = client.embeddings.create(
             model=model, input=message, dimensions=3072, encoding_format="float",
         )
-        # NOTE: 반환된 벡터가 쓰레기 값인 경우 추가
-        embedded_query = response.data[0].embedding if response.data else None
-        if (not embedded_query or len(embedded_query) != 3072
-                or not all(math.isfinite(x) for x in embedded_query) or not any(embedded_query)):
-            raise ValueError("Invalid embedding")
+        return validate_embedding(response)
     except Exception as error:
         raise _model_unavailable() from error
-    if not embedded_query:
-        raise _model_unavailable()
-    return embedded_query
+
+
+def validate_embedding(response) -> list[float]:
+    """동기·비동기 호출이 같은 차원과 유한 벡터 계약을 사용한다."""
+    vector = response.data[0].embedding if response.data else None
+    if (not vector or len(vector) != 3072
+            or not all(math.isfinite(x) for x in vector) or not any(vector)):
+        raise ValueError("Invalid embedding")
+    return vector
