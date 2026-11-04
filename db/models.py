@@ -94,7 +94,9 @@ class CorpusStat(Base):
 
 def make_engine(url: str = None, echo: bool = False):
     """커넥션 풀 생성: 연결을 미리 만들어 놓고, 필요할 때 쓰면 반납한다"""
-    return create_engine(url or DATABASE_URL, echo=echo, pool_pre_ping=True)
+    # DB 장애가 장르 목록 조회·텍스트 추천까지 무기한 지연시키지 않도록 제한한다.
+    return create_engine(url or DATABASE_URL, echo=echo, pool_pre_ping=True,
+                         connect_args={"connect_timeout": 5}, pool_timeout=5)
 
 engine = make_engine()
 # NOTE: DB 세션 만들어 준다. 커밋 후 객체 속성 재접근 시 이미 실행했던 쿼리 재시도 방지

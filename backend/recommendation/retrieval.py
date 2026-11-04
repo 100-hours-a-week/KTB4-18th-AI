@@ -1,9 +1,40 @@
 """추천·조회 DB 연결."""
 
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+from sqlalchemy import text
+
 from db.types import Track
 from backend.core.errors import _catalog_unavailable
 from backend.recommendation.adapter import search_space, to_v4_query
 from backend.recommendation.counts import DEFAULT_TRACK_COUNT
+
+
+_db_deadline: ContextVar[float | None] = ContextVar("db_deadline", default=None)
+
+
+@contextmanager
+def db_time_limit(deadline: float):
+    """이 범위의 SQL이 턴 마감을 넘지 않게 쿼리마다 남은 시간을 다시 계산한다."""
+
+    token = _db_deadline.set(deadline)
+    try:
+        yield
+    finally:
+        _db_deadline.reset(token)
+
+
+def apply_time_limit(session) -> None:
+    deadline = _db_deadline.get()
+    if deadline is None:
+        return
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("turn deadline passed")
+    session.execute(text("select set_config('statement_timeout', :limit, true)"),
+                    {"limit": str(max(1, round(left * 1000)))})
 
 
 def vector_recommendation(
@@ -27,6 +58,7 @@ def vector_recommendation(
             qvec = to_v4_query(qvec)
 
         with SessionLocal() as session:
+            apply_time_limit(session)
             tracks = vector_search(
                 session, qvec, exclude_ids=exclude_ids, genres=genres,
                 min_year=min_year, max_year=max_year, space=space, k=k,
@@ -48,8 +80,23 @@ def lookup_tracks_db(
         from db.search import lookup as db_lookup
 
         with SessionLocal() as session:
+            apply_time_limit(session)
             return db_lookup(session, song_title=song_title, artist=artist, exclude_ids=exclude_ids, limit=limit,
                              seed_artist=seed_artist)
+    except Exception as error:
+        raise _catalog_unavailable() from error
+
+
+def resolve_title_db(song_title: str, artist: str):
+    """가수가 정해진 제목 오타를 실제 카탈로그 후보로 해석한다."""
+
+    try:
+        from db.models import SessionLocal
+        from db.search import resolve_title
+
+        with SessionLocal() as session:
+            apply_time_limit(session)
+            return resolve_title(session, song_title, artist)
     except Exception as error:
         raise _catalog_unavailable() from error
 

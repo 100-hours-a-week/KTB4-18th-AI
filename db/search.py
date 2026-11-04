@@ -162,6 +162,67 @@ def lookup(
     return [row for row in unique if id(row) in chosen]
 
 
+# NOTE: 오타는 글자 몇 개의 편집이고, 한 단어가 바뀌면 다른 제목이다. 단어 묶음 유사도는 이 둘을
+# 구분하지 못해 없는 곡을 채택했다. 평가 기록은 lab/datasets/title-resolution-* 에 있다.
+# 짧은 제목은 Follow/Hollow처럼 한 글자 차이의 실제 다른 곡과 문자열로 구분되지 않아 자동으로 고르지 않는다.
+TITLE_MIN_LENGTH = 8
+TITLE_LONG_LENGTH = 14
+
+
+def _title_key(title: str) -> str:
+    return "".join(char for char in title.lower() if char.isalnum())
+
+
+def title_distance(left: str, right: str) -> int:
+    """대소문자·문장부호를 뺀 제목의 편집 거리. 인접 글자 뒤바뀜은 1회로 센다."""
+
+    a, b = _title_key(left), _title_key(right)
+    table = [[max(i, j) if i == 0 or j == 0 else 0 for j in range(len(b) + 1)] for i in range(len(a) + 1)]
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            table[i][j] = min(table[i - 1][j] + 1, table[i][j - 1] + 1,
+                              table[i - 1][j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                table[i][j] = min(table[i][j], table[i - 2][j - 2] + 1)
+    return table[len(a)][len(b)]
+
+
+def same_title(name: str, title: str) -> bool:
+    """괄호·대시 뒤 부가 표기와 한영 병기를 뺀 제목까지 같은 곡 제목으로 본다."""
+
+    base = re.split(r"\s*[(\[]|\s+-\s+", title)[0]
+    parts = [base] + re.findall(r"[가-힣0-9][가-힣0-9\s]*|[^가-힣]+", base)
+    return any(_title_key(part) == _title_key(name) for part in [title, *parts])
+
+
+def pick_confident_title(song_title: str, rows: list) -> TrackRow | None:
+    """충분히 가까운 곡이 정확히 하나일 때만 고른다. 애매하면 고르지 않는다."""
+
+    length = len(_title_key(song_title))
+    if length < TITLE_MIN_LENGTH:
+        return None
+    # 같은 곡이 앨범별로 여러 행이면 동점으로 보이므로 제목당 하나만 비교한다.
+    unique = {_title_key(row.title): row for row in reversed(rows)}
+    ranked = sorted(((title_distance(song_title, row.title), row) for row in unique.values()),
+                    key=lambda pair: pair[0])
+    allowed = 1 if length < TITLE_LONG_LENGTH else 2
+    if not ranked or ranked[0][0] > allowed:
+        return None
+    if len(ranked) > 1 and ranked[1][0] <= ranked[0][0]:
+        return None
+    return ranked[0][1]
+
+
+def resolve_title(session: Session, song_title: str, artist: str) -> TrackRow | None:
+    """가수가 정해진 오타만 그 가수의 실제 제목과 비교해 해석한다."""
+
+    # 카탈로그에 실제로 있는 제목이면 오타가 아니라 이 가수에게 없는 곡을 물은 것이다.
+    if session.scalar(select(TrackRow.track_id).where(func.lower(TrackRow.title) == song_title.lower()).limit(1)):
+        return None
+    stmt = select(TrackRow).where(TrackRow.artist.op("~*")(rf"\y{re.escape(artist)}\y"))
+    return pick_confident_title(song_title, session.execute(stmt).scalars().all())
+
+
 # NOTE: 장르는 검색에서 하드 필터라, 검색 가능한 곡이 1~2곡뿐인 장르("Adult
 # Contemporary" 1곡)가 뽑히면 카드가 1장 이하로 나온다. 이보다 작은 장르는 필터
 # 후보에서 빼고, 그 단어는 recommend_query에 남겨 임베딩 검색에 맡긴다.
