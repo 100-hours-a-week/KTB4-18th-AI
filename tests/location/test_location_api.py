@@ -153,6 +153,21 @@ def test_relief_failure_skips_only_mountain(calls):
     assert "mountain" not in {hit.kind for hit in calls["contexts"][0].nature}
 
 
+def test_relief_is_not_fetched_without_osm(calls, monkeypatch):
+    fetched = []
+
+    async def relief(_lat, _lng):
+        fetched.append(True)
+        return calls["relief"]
+
+    monkeypatch.setattr(service.sources, "fetch_relief", relief)
+
+    response = TestClient(app).post(URL, json=HAEUNDAE)
+
+    assert response.status_code == 200
+    assert fetched == []
+
+
 def test_llm_not_configured_returns_model_unavailable(calls, monkeypatch):
     monkeypatch.delenv("OPENROUTER_LLM_API_KEY", raising=False)
     monkeypatch.setattr(service, "_location_query", REAL_LOCATION_QUERY)

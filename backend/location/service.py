@@ -50,16 +50,17 @@ async def _gather_sources(lat: float, lng: float) -> dict:
     calls = {
         "kakao": sources.fetch_kakao(lat, lng),
         "weather": sources.fetch_weather(lat, lng),
-        "relief": sources.fetch_relief(lat, lng),
     }
     if osm.available():
         # OSM 측정은 CPU 계산이라 이벤트 루프를 막지 않게 스레드에서 돌린다
         # NOTE: 시간을 넘겨도 스레드는 취소되지 않고 끝까지 실행된 뒤 버려진다
         calls["osm"] = asyncio.to_thread(osm.measure, lat, lng)
+        # 고도 기복은 OSM 산 판정에만 쓴다. OSM 없이 부르면 좌표 81개만큼 Open-Meteo 한도를 깎고 버린다
+        calls["relief"] = sources.fetch_relief(lat, lng)
 
     timed = [asyncio.wait_for(call, SOURCE_TIMEOUT_S) for call in calls.values()]
     results = await asyncio.gather(*timed, return_exceptions=True)
-    raw = {"osm": None}
+    raw = {"osm": None, "relief": None}
     for name, result in zip(calls, results):
         if isinstance(result, Exception):
             logger.warning("Location source failed: source=%s error=%s", name, type(result).__name__)
