@@ -29,7 +29,7 @@ from backend.location import osm, sources
 from backend.location.context import (
     build_context, combine_kakao_osm, summarize_kakao, summarize_osm_nature, summarize_weather, weather_unknown,
 )
-from backend.location.query import LocationQuery, llm_query, strip_names
+from backend.location.query import LocationQuery, llm_query, strip_names, with_mood
 from backend.location.schemas import (
     LocationContext, LocationRecommendationRequest, LocationRecommendationResponse, PlaceSummary, Provider,
 )
@@ -122,7 +122,7 @@ async def _recommend(lat: float, lng: float) -> tuple[LocationQuery, list, Provi
     # OpenAI SDK·DB 호출은 동기 함수라 스레드에서 돌린다
     query = await asyncio.to_thread(_location_query, ctx)
     timings["query_ms"] = round((time.monotonic() - started) * 1000)
-    tracks = await asyncio.to_thread(_search, strip_names(query.music_query, ctx))
+    tracks = await asyncio.to_thread(_search, with_mood(strip_names(query.music_query, ctx), query.mood))
     return query, tracks, provider, timings
 
 

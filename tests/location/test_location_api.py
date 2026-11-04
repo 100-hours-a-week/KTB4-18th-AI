@@ -98,7 +98,8 @@ def test_success_returns_message_and_tracks(calls):
 
     assert response.status_code == 200
     assert response.json() == {"message": MESSAGE, "tracks": [track().model_dump()]}
-    assert calls["searched"] == ["맑은 오후 바닷가에서 듣기 좋은 노래"]
+    # 검색에는 mood 첫 단어를 합친 문장이 들어간다
+    assert calls["searched"] == ["맑은 오후 바닷가에서 듣기 좋은 청량한 노래"]
     ctx = calls["contexts"][0]
     assert ctx.provider == "kakao"
     assert [hit.kind for hit in ctx.nature] == ["sea"]

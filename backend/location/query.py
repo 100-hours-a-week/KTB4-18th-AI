@@ -78,7 +78,9 @@ _INPUT_RULES = """사용자가 지금 있는 장소를 측정한 값을 받아 �
 - weather가 null이면 날씨를 측정하지 못한 것이니 날씨를 언급하지 마세요.
 
 분위기 판단
-- 측정값(날씨·시간대·지형·상권)에 근거한 분위기만 쓰세요. 근거 없이 감성·포근·낭만 같은 감정을 덧붙이지 마세요.
+- 분위기는 mood에만 쓰고, 측정값(날씨·시간대·지형·상권)에서 추론하세요.
+- 측정값에 없는 사실과 사용자의 감정(설레는, 외로운 등)은 지어내지 마세요.
+  근거 없이 감성·포근·낭만 같은 말을 덧붙이지 마세요.
 - 새벽이거나 비·눈·안개·폭풍일 때는 '활기찬', '신나는'처럼 붐빔을 단정하는 표현을 쓰지 마세요.
 - 밤에는 place_traits에 먹자골목·술집처럼 밤에 붐비는 상권이 있을 때만 활기를 쓸 수 있습니다.
 - quiet인데 북적이는처럼 측정값과 정반대인 분위기를 만들지 마세요.
@@ -88,6 +90,7 @@ _QUERY_RULES = {
     "situation": """
 music_query
 그 자리에 선 사람이 음악 검색창에 쓸 법한 한국어 명사구 하나. 예: "비 오는 밤 바닷가에서 듣기 좋은 노래".
+- 분위기 형용사는 넣지 마세요. mood에 따로 쓰면 코드가 합칩니다.
 - 이 장소를 다른 곳과 구별 짓는 특징(바다, 산, 강, 업무지구, 테마거리 등)이 있으면 하나 이상 살리세요.
 - 지역명·장소 이름은 쓰지 마세요. 입력에 없는 지명을 지식으로 덧붙이지도 마세요.
 - "추천해줘" 같은 요청 표현, 악기·음색·템포 같은 소리 묘사, 곡 제목·아티스트 이름은 넣지 마세요.
@@ -101,7 +104,7 @@ music_query
 }
 _OUTPUT_RULES = """
 mood
-music_query와 일치하는 분위기 단어 1~4개.
+측정값에서 추론한 음악 분위기를 '~한' 꼴 형용사로 1~2개. 가장 알맞은 것을 먼저 쓰세요.
 
 message
 추천 곡 목록 위에 보여줄 한국어 문장. 부드러운 해요체로 40자 안팎.
@@ -149,6 +152,17 @@ def strip_names(query: str, ctx: LocationContext) -> str:
     for name, after, word in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
         query = re.sub(re.escape(name) + after, word, query)
     return " ".join(query.split())
+
+
+def with_mood(query: str, mood: list[str]) -> str:
+    """mood 첫 단어를 검색어의 끝 "노래"·"음악" 앞에 넣는다. 검색어 예시에 형용사를 넣으면 LLM이 그 형용사를 베껴서
+    (비 오는 밤 5곳 중 4곳이 예시의 "차분한") 분위기는 예시 없는 mood로 따로 받는다"""
+    if not mood:
+        return query
+    for noun in ("노래", "음악"):
+        if query.endswith(noun):
+            return f"{query[:-len(noun)]}{mood[0]} {noun}"
+    return f"{query} {mood[0]}"
 
 
 def _llm_input(ctx: LocationContext) -> str:
