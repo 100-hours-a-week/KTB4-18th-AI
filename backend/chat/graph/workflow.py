@@ -3,9 +3,12 @@
 노드 구현이 끝나면 여기서 그래프 형태(분기·재시도 등)를 조정한다.
 """
 
+import os
+
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from backend.chat.graph.dialogue import delivered_dialogue
 from backend.chat.graph.nodes import (
     classify_node,
     embed_node,
@@ -73,14 +76,9 @@ def build_graph(*, photo: bool = False):
     밖에서 그대로 처리한다.
     """
 
-    import os
     if not photo and os.getenv("AGENTIC_CHAT") == "1":
-        from backend.chat.graph.agent import run_agent
-        agent = StateGraph(RecommendationState)
-        agent.add_node("search", run_agent)
-        agent.add_edge(START, "search")
-        agent.add_edge("search", END)
-        return agent.compile(checkpointer=_checkpointer)
+        from backend.chat.graph.agent import build_agent_graph
+        return build_agent_graph(_checkpointer)
 
     graph = StateGraph(RecommendationState)
 
@@ -112,14 +110,19 @@ def record_shown_tracks(thread_id: str, tracks: list[dict]) -> None:
     """검색 성공이 아니라 SSE 카드 전송 시점에 최근 목록과 중복 제외 ID를 저장한다."""
     if not tracks:
         return
-    build_graph().update_state(
-        {"configurable": {"thread_id": thread_id}},
-        {"shown_track_ids": [track["track_id"] for track in tracks],
-         "recent_tracks": [
-             {"rank": rank, "track_id": track["track_id"],
-              "title": track["title"], "artist": track["artist"]}
-             for rank, track in enumerate(tracks, start=1)
-         ]},
-        # 검색·조회 모두 종료된 상태를 갱신하며 후속 노드를 예약하지 않는다.
-        as_node="search",
-    )
+    graph = build_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+    agentic = os.getenv("AGENTIC_CHAT") == "1"
+    update = {"shown_track_ids": [track["track_id"] for track in tracks],
+              "recent_tracks": [
+                  {"rank": rank, "track_id": track["track_id"],
+                   "title": track["title"], "artist": track["artist"]}
+                  for rank, track in enumerate(tracks, start=1)
+              ]}
+    if agentic:
+        # 곡이 실제로 나간 시점에 추천 요청이 끝난다. 답변 실패 후 재시도는 같은 요청으로 남는다.
+        values = graph.get_state(config).values
+        if values.get("intent") == "recommend":
+            update |= delivered_dialogue(values)
+    # 검색·조회 모두 종료된 상태를 갱신하며 후속 노드를 예약하지 않는다.
+    graph.update_state(config, update, as_node="finish" if agentic else "search")

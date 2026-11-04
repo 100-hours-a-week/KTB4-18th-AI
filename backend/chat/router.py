@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterator
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -7,6 +8,7 @@ from backend.chat.streaming import sse, stream_answer, stream_fast_answer, strea
 from backend.http.schemas import ErrorResponse
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -63,27 +65,30 @@ async def _live_agent_response(body):
         finally:
             queue.put_nowait(None)
 
-    yield sse("status", {"stage": "accepted", "elapsed_ms": 0,
-                         "request_id": str(body.request_id)})
+    # Spring 텍스트 파서는 모르는 이벤트를 502로 처리하므로 진행 이벤트는 로컬 인스펙터에만 보낸다.
+    if inspect:
+        yield sse("status", {"stage": "accepted", "elapsed_ms": 0,
+                             "request_id": str(body.request_id)})
     task = asyncio.create_task(prepare())
     try:
         while True:
             event = await queue.get()
             if event is None:
                 break
-            # 상세 검색어와 모델의 결정 요약은 로컬 인스펙터에만 전달한다.
-            public = {k: v for k, v in event.items()
-                      if k in ("stage", "elapsed_ms", "request_id", "attempt", "count")}
-            yield sse("status", public)
             if inspect:
+                public = {k: v for k, v in event.items()
+                          if k in ("stage", "elapsed_ms", "request_id", "attempt", "count")}
+                yield sse("status", public)
                 yield sse("agent_step", event)
         result = await task
-        yield sse("status", {"stage": "answer_start",
-                             "elapsed_ms": round((time.monotonic()-started)*1000)})
+        if inspect:
+            yield sse("status", {"stage": "answer_start",
+                                 "elapsed_ms": round((time.monotonic()-started)*1000)})
         response = _outcome_response(body, result)
         async for chunk in response.body_iterator:
             yield chunk
     except Exception:
+        logger.exception("Live agent response failed")
         yield sse("error", {"detail": "챗봇 처리 중 오류가 발생했습니다. 다시 요청해 주세요."})
     finally:
         stopped.set()

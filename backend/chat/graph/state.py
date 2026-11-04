@@ -16,7 +16,6 @@ class RecommendationState(TypedDict, total=False):
     # 생각해보니 config라는 방법을 배웠어서 그걸로 사용했다.
 
     # ── 입력 ──
-    agent_events: list[dict]
     message: str
     user_context: UserContext | None
 
@@ -61,3 +60,12 @@ class RecommendationState(TypedDict, total=False):
     # ── lookup_node가 채움 ──
     lookup_status: str  # "found" | "ambiguous" | "not_found"
     lookup_tracks: list[Track]
+    # 코드가 오타를 해석해 곡을 찾았을 때의 카탈로그 제목. 답변에서 사용자에게 알린다.
+    matched_title: str | None
+
+    # 같은 세션의 여러 턴에서 유지. 질문은 요청당 한 번, 새 음악 요청에서만 초기화한다.
+    dialogue_context: dict
+    dialogue_reply: str | None
+    request_relation: str
+    followup_question: str | None
+    released_filters: list[str]

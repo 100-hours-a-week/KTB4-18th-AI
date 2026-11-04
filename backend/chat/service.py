@@ -1,6 +1,8 @@
 """음악 검색 결과를 사용자 응답으로 만드는 V1 추천 흐름."""
 
 import os
+import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Literal
 from openai import OpenAI
@@ -17,6 +19,10 @@ GUIDE_TEXT = (
     "찾는 건 아직 지원하지 않아요."
 )
 OUT_OF_SCOPE_TEXT = "죄송해요, 저는 음악 추천과 곡 정보 조회만 도와드릴 수 있어요."
+AGENTIC_OUT_OF_SCOPE_TEXT = (
+    "저는 음악 추천과 곡 정보 조회를 도와드려요. 지금 있는 곳이나 기분을 알려주시면 어울리는 곡을 "
+    "찾아드릴게요. 예: '비 오는 날 창가에서 듣기 좋은 노래'"
+)
 NOT_FOUND_TEXT = "요청하신 곡 정보를 찾지 못했어요. 곡 제목이나 아티스트명을 다시 확인해 주세요."
 CLARIFY_TEXT = {
     "invalid_count": "곡 수는 1곡 이상으로 알려주세요. 예: '잔잔한 노래 2곡 추천해줘'",
@@ -50,6 +56,7 @@ FAST_MODE_ON_TEXT = (
 )
 FAST_RECOMMEND_TEXT = "고속 모드로 추천한 음악이에요."
 FAST_LOOKUP_TEXT = "고속 모드로 찾은 곡이에요."
+LATE_RECOMMEND_TEXT = "요청에 어울리는 곡을 찾았어요."
 
 
 @dataclass
@@ -78,10 +85,25 @@ def prepare_recommendation(message: str, thread_id: str, *, on_event=None) -> Ch
     # 순환 import를 피하려고 그래프 모듈은 호출 시점에 import한다.
     from backend.chat.graph.workflow import build_graph
 
-    result = build_graph().invoke(
-        {"message": message, "messages": [message]},
-        config={"configurable": {"thread_id": thread_id, "client": client, "on_event": on_event}},
-    )
+    configurable = {"thread_id": thread_id, "client": client, "on_event": on_event}
+    agentic = os.getenv("AGENTIC_CHAT") == "1"
+    if agentic:
+        from backend.chat.graph import agent
+
+    with agent.exclusive_turn(thread_id) if agentic else nullcontext():
+        if agentic:
+            configurable["deadline"] = time.monotonic() + agent.TURN_BUDGET_S
+        result = build_graph().invoke(
+            {"message": message, "messages": [message]},
+            config={"configurable": configurable},
+        )
+
+    def answer_client(tracks):
+        # 곡이 있어 답변 LLM을 부를 때만 남은 시간을 쓴다. 고정 응답은 마감과 무관하게 돌려준다.
+        return client.with_options(timeout=agent.remaining({"configurable": configurable})) if agentic and tracks else client
+
+    if agentic and result.get("dialogue_reply"):
+        return ChatOutcome(kind="static", text=result["dialogue_reply"])
 
     intent = result["intent"]
     count = result.get("requested_count")
@@ -103,8 +125,12 @@ def prepare_recommendation(message: str, thread_id: str, *, on_event=None) -> Ch
         if fast_mode:
             return ChatOutcome(kind="fast", tracks=result["tracks"], text=FAST_RECOMMEND_TEXT,
                                hints=AnswerHints.from_classification(result))
+        # NOTE: 콜드 검색이 예산을 다 쓰면 찾은 곡을 버리지 않고 답변 LLM만 생략한다.
+        if agentic and time.monotonic() >= configurable["deadline"]:
+            return ChatOutcome(kind="fast", tracks=result["tracks"], text=LATE_RECOMMEND_TEXT,
+                               hints=AnswerHints.from_classification(result))
         return ChatOutcome(
-            kind="recommend", client=client, tracks=result["tracks"],
+            kind="recommend", client=answer_client(result["tracks"]), tracks=result["tracks"],
             query=result["recommend_query"],
             hints=AnswerHints.from_classification(result),
         )
@@ -119,11 +145,16 @@ def prepare_recommendation(message: str, thread_id: str, *, on_event=None) -> Ch
     if intent == "lookup":
         status = result["lookup_status"]
         if status == "found":
+            # NOTE: 코드가 해석한 제목은 사실이 이미 확정돼 답변 LLM 없이 고정 문구로 알린다.
+            if result.get("matched_title"):
+                return ChatOutcome(kind="fast", tracks=result["lookup_tracks"],
+                                   text=f"입력하신 제목과 가장 가까운 '{result['matched_title']}'(으)로 찾았어요.",
+                                   hints=AnswerHints.from_classification(result))
             if fast_mode:
                 return ChatOutcome(kind="fast", tracks=result["lookup_tracks"], text=FAST_LOOKUP_TEXT,
                                    hints=AnswerHints.from_classification(result))
             return ChatOutcome(
-                kind="lookup", client=client, tracks=result["lookup_tracks"],
+                kind="lookup", client=answer_client(result["lookup_tracks"]), tracks=result["lookup_tracks"],
                 query=result["recommend_query"],
                 hints=AnswerHints.from_classification(result),
             )
@@ -131,4 +162,4 @@ def prepare_recommendation(message: str, thread_id: str, *, on_event=None) -> Ch
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["lookup_ambiguous"])
         return ChatOutcome(kind="static", text=NOT_FOUND_TEXT)
 
-    return ChatOutcome(kind="static", text=OUT_OF_SCOPE_TEXT)
+    return ChatOutcome(kind="static", text=AGENTIC_OUT_OF_SCOPE_TEXT if agentic else OUT_OF_SCOPE_TEXT)

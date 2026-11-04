@@ -28,7 +28,11 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     if state.get("recent_tracks"):
         messages.insert(-1, "챗봇이 최근 전송한 곡 목록(번호는 카드 순서): "
                         + json.dumps(state["recent_tracks"], ensure_ascii=False))
-    result = classify(config["configurable"]["client"], messages)
+    if config["configurable"].get("dialogue_enabled"):
+        result = classify(config["configurable"]["client"], messages,
+                          dialogue=state.get("dialogue_context") or {})
+    else:
+        result = classify(config["configurable"]["client"], messages)
     if result["intent"] == "fast_mode":
         result["fast_mode"] = True
     return result
