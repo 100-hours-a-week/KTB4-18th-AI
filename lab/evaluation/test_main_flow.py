@@ -66,7 +66,10 @@ class Remote(MagicMock):
         return self.stored[dataset_name]
 
     def create_examples(self, dataset_id, examples):
-        self.stored[dataset_id].examples += [SimpleNamespace(id=uuid4(), **{k: e[k] for k in ('inputs', 'outputs', 'metadata', 'split')}) for e in examples]
+        from datetime import datetime, timedelta, timezone
+        saved = datetime.now(timezone.utc) + timedelta(seconds=5)  # 서버 반영 시각이 호출 시각보다 늦다.
+        self.stored[dataset_id].examples += [SimpleNamespace(id=uuid4(), created_at=saved, modified_at=saved,
+                                                             **{k: e[k] for k in ('inputs', 'outputs', 'metadata', 'split')}) for e in examples]
 
     def list_examples(self, dataset_id, **_):
         return self.stored[dataset_id].examples
@@ -180,3 +183,11 @@ def test_test_case_names_stay_out_of_the_console(flow, capsys):
     assert 'T-1' not in capsys.readouterr().out
     flow.run('b', '--no-judge')
     assert 'T-1' in capsys.readouterr().out
+
+
+def test_new_dataset_is_tagged_at_the_time_its_examples_were_saved(flow):
+    flow.run('a', '--no-judge')
+    stored = flow.remote.stored['meomuneum-validation-20261102-text']
+    tagged = flow.remote.update_dataset_tag.call_args.kwargs
+    assert tagged['tag'] == 'validation-20261102'
+    assert tagged['as_of'] == max(e.modified_at for e in stored.examples)

@@ -365,6 +365,16 @@ def calls_cost(calls):
     return sum(costs) if costs and all(c is not None for c in costs) else None
 
 
+def tag_dataset(client, dataset_id, expected):
+    """예제가 저장된 시각에 버전 태그를 붙인다. 호출 시각으로 붙이면 서버 반영 전이라 빈 버전이 된다."""
+    for _ in range(10):
+        saved = list(client.list_examples(dataset_id=dataset_id))
+        if len(saved) == expected: break
+        time.sleep(1)
+    assert len(saved) == expected, 'remote_examples_not_ready'
+    client.update_dataset_tag(dataset_id=dataset_id,as_of=max(e.modified_at or e.created_at for e in saved),tag=DATASET_VERSION)
+
+
 async def run_kind(kind, rows, client, agent_tag, args, metadata, capture):
     from langsmith import aevaluate, get_current_run_tree, trace
     from evaluation.telemetry import CASE
@@ -381,7 +391,7 @@ async def run_kind(kind, rows, client, agent_tag, args, metadata, capture):
                 example['attachments'] = {k:('audio/wav' if k=='audio' else 'image/jpeg',(DATA / rel).read_bytes()) for k,rel in row['attachments'].items()}
             examples.append(example)
         client.create_examples(dataset_id=dataset.id,examples=examples)
-        client.update_dataset_tag(dataset_id=dataset.id,as_of=datetime.now(timezone.utc),tag=DATASET_VERSION)
+        tag_dataset(client,dataset.id,len(rows))
     remote = list(client.list_examples(dataset_id=dataset.id,as_of=DATASET_VERSION))
     local = {r['metadata']['id']:r for r in rows}
     assert len(remote)==len(rows) and all(e.inputs==local[e.metadata['id']]['inputs'] and e.outputs==local[e.metadata['id']]['outputs'] for e in remote), 'remote_dataset_mismatch'
