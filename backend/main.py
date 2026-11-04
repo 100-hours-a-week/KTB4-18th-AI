@@ -63,5 +63,5 @@ def local_experiment():
         raise HTTPException(status_code=404)
     from backend.recommendation.adapter import search_space
     return {'workflow': 'agentic' if os.getenv('AGENTIC_CHAT') == '1' else 'baseline',
-            'search_space': search_space(), 'max_tool_stages': 2, 'jev': False,
+            'search_space': search_space(), 'llm_recovery_calls': 0, 'jev': False,
             'trace_delivery': 'live', 'photo': 'existing_pipeline'}

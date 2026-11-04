@@ -40,7 +40,7 @@
     function seconds(ms) { return `${(ms / 1000).toFixed(1)}초`; }
     fetch('/local/experiment').then(r => r.ok ? r.json() : null).then(config => {
       const box = $('experimentConfig'); box.replaceChildren();
-      for (const label of config ? [config.workflow, `검색 ${config.search_space}`, `재시도 최대 ${Math.max(0,config.max_tool_stages-1)}회`, config.jev ? 'Jev 켜짐' : 'Jev 꺼짐'] : ['일반 실행 · 상세 설정 없음']) {
+      for (const label of config ? [config.workflow, `검색 ${config.search_space}`, `LLM 복구 ${config.llm_recovery_calls}회`, config.jev ? 'Jev 켜짐' : 'Jev 꺼짐'] : ['일반 실행 · 상세 설정 없음']) {
         const chip=document.createElement('span');chip.textContent=label;box.append(chip);
       }
     }).catch(() => {$('experimentConfig').textContent='실행 설정을 불러오지 못했습니다.';});

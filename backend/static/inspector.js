@@ -1,31 +1,25 @@
 /* Shared presentation for real SSE events. No simulated reasoning or model calls. */
 const AGENT_STAGES = {
-  accepted: '요청 접수', classification_start: '요청 의도 분석 중',
+  clarification: '추천 방향 질문', accepted: '요청 접수', classification_start: '요청 의도 분석 중',
   decision: '요청 해석 완료', embedding_start: '검색 임베딩 생성 중',
   embedding: '임베딩 생성 완료', search_start: '음악 검색 중', lookup_start: '곡·아티스트 조회 중',
-  tool_result: '검색 결과 확인', recovery_start: '다시 검색할 방법 확인 중',
-  recovery_decision: '다른 표기로 재검색 결정', finish: '검색 단계 종료', answer_start: '답변 작성 중',
+  title_resolution_start: '제목 표기 확인 중', tool_result: '검색 결과 확인', finish: '검색 단계 종료', answer_start: '답변 작성 중',
   analyzing: '사진 확인 중', searching: '음악 검색 중'
 };
 const FINISH_REASONS = {
-  results_available: '검색 결과를 찾았습니다.', attempt_limit: '최초 실행과 재시도 1회를 마쳤습니다.',
+  awaiting_context: '질문에 대한 답을 기다립니다.', results_available: '검색 결과를 찾았습니다.', title_resolved: '카탈로그의 가장 가까운 제목으로 찾았습니다.',
+  no_results: '일치하는 곡을 찾지 못했습니다.',
   no_results_with_required_filters: '지정한 조건을 유지하고 검색을 종료했습니다.',
-  clarify_or_static: '검색 없이 안내 또는 추가 질문을 드립니다.',
-  duplicate_action_blocked: '같은 검색을 반복하지 않고 종료했습니다.',
-  no_supported_recovery: '지원할 수 있는 다른 검색 방법을 찾지 못했습니다.',
-  artist_change_blocked: '아티스트를 임의로 바꾸지 않고 종료했습니다.',
-  recovery_model_failed: '재검색 판단을 완료하지 못해 종료했습니다.',
-  execution_deadline: '다음 검색을 시작할 수 있는 시간을 초과했습니다.'
+  clarify_or_static: '검색 없이 안내 또는 추가 질문을 드립니다.'
 };
 function stageLabel(data) {
   return `${AGENT_STAGES[data.stage] || data.stage}${data.attempt ? ` · ${data.attempt}차 시도` : ''}${data.count != null ? ` · ${data.count}곡` : ''}`;
 }
 function eventExplanation(data) {
+  if (data.stage === 'clarification') return data.question || '추천 방향을 확인합니다.';
   if (data.stage === 'decision') return `요청을 ${ {recommend:'분위기·상황 추천',lookup:'곡·아티스트 조회',guide:'사용법 안내',clarify:'추가 정보 확인',out_of_scope:'지원 범위 안내'}[data.intent] || data.intent || '음악 요청'}로 해석했습니다.`;
   if (data.stage === 'embedding') return data.query ? `검색 문장: ${data.query}` : '';
   if (data.stage === 'tool_result') return data.count ? `${data.count}곡을 찾았습니다.` : '이번 조회에서 결과를 찾지 못했습니다.';
-  if (data.stage === 'recovery_start') return '같은 목적과 조건을 유지하며 다른 검색 방법을 확인합니다.';
-  if (data.stage === 'recovery_decision') return `다시 조회할 값: ${data.value || ''}${data.reason ? ` · 모델의 결정 요약: ${data.reason}` : ''}`;
   if (data.stage === 'finish') return FINISH_REASONS[data.reason] || data.reason || '';
   return '';
 }
@@ -52,7 +46,7 @@ function createProgress(row) {
     },
     finish(error, duration) {
       clearInterval(timer); panel.classList.add(error ? 'failed' : 'complete');
-      title.textContent = error ? '처리를 완료하지 못했어요' : `처리 완료${attempt > 1 ? ' · 재시도 1회' : ''}`;
+      title.textContent = error ? '처리를 완료하지 못했어요' : '처리 완료';
       time.textContent = `${(duration/1000).toFixed(1)}초`; panel.open = !!error;
     }
   };
@@ -100,16 +94,19 @@ const inspector = (() => {
     if(name==='text' && data.delta) { m.text_chunks++; if(m.first_text_ms==null) m.first_text_ms=received; get('metricText').textContent=`${(m.first_text_ms/1000).toFixed(2)}초`; get('metricChunks').textContent=m.text_chunks; }
     if(data.stage) { get('currentStage').textContent=stageLabel(data); m.tool_attempts=Math.max(m.tool_attempts,data.attempt||0); }
     row(name,data,received); get('eventCount').textContent=trace.events.length;
-    if(name==='agent_step') {
+    const photoEvent = trace.endpoint === '/v1/chat/images';
+    if(name==='agent_step' || (photoEvent && (name==='status' || name==='scene' || name==='error'))) {
       trace.facts = {...trace.facts};
+      if(photoEvent && data.scene) trace.facts['검색 문장']=data.scene.music_query;
+      if(photoEvent && data.provider) trace.facts['사진 분석']=data.provider;
+      if(photoEvent && data.stage==='search_start') { m.tool_attempts=1; trace.facts['검색 시도']='1회 (사진 자동 재시도 없음)'; }
+      if(photoEvent && name==='error') trace.facts['실패 단계']=AGENT_STAGES[data.stage] || data.stage || '확인 불가';
       if(data.intent) trace.facts['의도']=data.intent;
       if(data.search_space) trace.facts['검색 공간']=data.search_space;
       if(data.query) trace.facts['검색 문장']=data.query;
       if(data.tool) trace.facts['실행 도구']=data.tool;
-      if(data.attempt) trace.facts['검색 시도']=`${data.attempt} / 2 (재시도 최대 1회)`;
       if(data.count != null) trace.facts['결과']=`${data.count}곡`;
       if(data.stage==='tool_result' && data.tool==='search_music') trace.facts['필수 조건']=`장르 ${data.genres?.join(', ') || '미지정'} · 연도 ${data.min_year || '제한 없음'} ~ ${data.max_year || '제한 없음'}`;
-      if(data.value) trace.facts['재검색 값']=data.value;
       if(data.reason && data.stage==='finish') trace.facts['종료 이유']=FINISH_REASONS[data.reason] || data.reason;
       get('runFacts').replaceChildren(...Object.entries(trace.facts).map(([label,value])=>{
         const div=document.createElement('div');div.className='fact';

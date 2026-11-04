@@ -4,15 +4,19 @@ from backend import main
 
 def test_local_chat_page_uses_v1_fields() -> None:
     """테스트용 HTML 페이지가 v1에 맞게 나오는지 확인한다."""
-    response = TestClient(main.app).get("/app/")
+    client = TestClient(main.app)
+    response = client.get("/app/")
 
     assert response.status_code == 200
-    assert 'const CHAT_URL = "/v1/chat/messages"' in response.text
+    assert 'src="./console.js"' in response.text
     assert "thread_id" in response.text
     assert "request_id" in response.text
-    assert "response.body.getReader()" in response.text
-    assert "addTrackCards" in response.text
-    assert "store_url" in response.text
+    script = client.get('/app/console.js')
+    assert script.status_code == 200
+    assert 'const CHAT_URL = "/v1/chat/messages"' in script.text
+    assert "response.body.getReader()" in script.text
+    assert "addTrackCards" in script.text
+    assert "store_url" in script.text
 
 
 def test_local_page_is_revalidated_on_every_load() -> None:

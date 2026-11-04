@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
  const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/v1/chat/messages',async route=>{
   const ev=(event,data)=>`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  const steps=[{stage:'accepted',elapsed_ms:0},{stage:'classification_start',elapsed_ms:10},{stage:'decision',intent:'lookup',search_space:'v4',elapsed_ms:800},{stage:'lookup_start',tool:'lookup_music',attempt:1,elapsed_ms:810},{stage:'tool_result',tool:'lookup_music',attempt:1,count:0,elapsed_ms:1100},{stage:'recovery_start',attempt:1,elapsed_ms:1101},{stage:'recovery_decision',action:'retry',value:'The Day Before',reason:'다른 제목 표기로 조회',elapsed_ms:1500},{stage:'lookup_start',tool:'lookup_music',attempt:2,elapsed_ms:1501},{stage:'tool_result',tool:'lookup_music',attempt:2,count:1,elapsed_ms:1800},{stage:'finish',reason:'results_available',elapsed_ms:1801},{stage:'answer_start',elapsed_ms:1802}];
+  const steps=[{stage:'accepted',elapsed_ms:0},{stage:'classification_start',elapsed_ms:10},{stage:'decision',intent:'lookup',search_space:'v4',elapsed_ms:800},{stage:'lookup_start',tool:'lookup_music',attempt:1,elapsed_ms:810},{stage:'title_resolution_start',elapsed_ms:1100},{stage:'tool_result',tool:'lookup_music',attempt:1,count:1,elapsed_ms:1200},{stage:'finish',reason:'title_resolved',elapsed_ms:1201},{stage:'answer_start',elapsed_ms:1202}];
   let body='';for(const data of steps){body+=ev('status',Object.fromEntries(Object.entries(data).filter(([k])=>['stage','elapsed_ms','attempt','count'].includes(k))));if(!['accepted','answer_start'].includes(data.stage))body+=ev('agent_step',data);}
   body+=ev('text',{delta:'말씀하신 곡을 '})+ev('text',{delta:'찾았어요.'})+ev('tracks',{tracks:[{title:'The Day Before',artist:'NELL',track_id:'1',artwork_url:null,preview_url:'https://example.invalid/preview',store_url:'https://music.apple.com/'}]})+ev('done',{});
   await route.fulfill({status:200,contentType:'text/event-stream',body});
@@ -25,11 +25,11 @@ const assert=require('node:assert/strict');
  assert.equal(await page.locator('#metricChunks').innerText(),'2');
  await page.screenshot({path:'/tmp/agent-lab-result.png',fullPage:true});
  await page.locator('.run-panel summary').click();
- assert.equal(await page.locator('.run-steps li').count(),11);
- assert.match(await page.locator('#runFacts').innerText(),/재시도 최대 1회/);
+ assert.equal(await page.locator('.run-steps li').count(),8);
+ assert.match(await page.locator('#runFacts').innerText(),/가장 가까운 제목/);
  await page.screenshot({path:'/tmp/agent-lab-overview.png',fullPage:true});
  await page.locator('[data-panel="events"]').click();
- assert.equal(await page.locator('#responseSteps .public-status').count(),9);
+ assert.equal(await page.locator('#responseSteps .public-status').count(),6);
  await page.locator('#rawEvents').check();
  assert.ok(await page.locator('#responseSteps').evaluate(el=>el.classList.contains('show-raw')));
  await page.locator('[data-panel="payload"]').click();
@@ -77,7 +77,33 @@ const assert=require('node:assert/strict');
  }
  await page.emulateMedia({reducedMotion:'reduce'});
  assert.equal(await page.locator('.run-indicator').evaluate(el=>getComputedStyle(el).animationName),'none');
+ await page.setViewportSize({width:1440,height:1000});
+ await page.locator('#resetBtn').click();
+ let photoRequests=0;
+ await page.route('**/v1/chat/images',async route=>{
+   const event=(name,data)=>`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+   let body=event('verdict',{usable:true,reject_reason:null})+event('scene',{provider:'openrouter',scene:{music_query:'테스트용 검색 문장'}})+event('text',{delta:'사진 확인을 마쳤어요.'})+event('status',{stage:'embedding_start',elapsed_ms:10})+event('status',{stage:'embedding',elapsed_ms:20})+event('status',{stage:'search_start',elapsed_ms:21});
+   if(photoRequests++===0) body+=event('error',{detail:'테스트용 검색 시간 초과',reason:'PHOTO_TIMEOUT',stage:'search_start',elapsed_ms:100});
+   else body+=event('status',{stage:'tool_result',count:0,elapsed_ms:30})+event('tracks',{tracks:[]})+event('done',{});
+   await route.fulfill({status:200,contentType:'text/event-stream',body});
+ });
+ const picture=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=40;canvas.height=20;return canvas.toDataURL('image/png').split(',')[1];});
+ async function sendPhoto(){
+   await page.locator('#photoBtn').click();
+   await page.locator('#photoFile').setInputFiles({name:'test.png',mimeType:'image/png',buffer:Buffer.from(picture,'base64')});
+   await page.locator('#recommendPhoto').click();
+ }
+ await sendPhoto();
+ await page.locator('.run-panel.failed').waitFor();
+ assert.match(await page.locator('#runFacts').textContent(),/실패 단계.*음악 검색 중/);
+ const firstPhoto=JSON.parse(await page.locator('#reqBox').textContent());
+ await sendPhoto();
+ await page.locator('.run-panel.complete').waitFor();
+ const secondPhoto=JSON.parse(await page.locator('#reqBox').textContent());
+ assert.equal(firstPhoto.thread_id,secondPhoto.thread_id);
+ assert.notEqual(firstPhoto.request_id,secondPhoto.request_id);
+ assert.equal(photoRequests,2);
  assert.deepEqual(errors,[]);
- console.log('PASS: layout, retry, open-stream progress, incremental text, errors, tabs, reset, mobile, reduced motion, no JS errors');
+ console.log('PASS: layout, retry, open-stream progress, incremental text, errors, tabs, reset, mobile, reduced motion, photo failure then retry, no JS errors');
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});
