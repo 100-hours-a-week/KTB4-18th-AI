@@ -64,12 +64,12 @@ uv run python -m pytest -q
 
 ## 회귀 평가
 
-운영/개발 요청 트레이스와 고정 데이터셋 Experiment는 구분한다. 회귀 평가 실행기·데이터·실측 결과는
-현재 로컬 전용 `lab/evaluation/`·`lab/results/`에 있으며 이 추적 연동 변경에 포함하지 않는다.
-로컬 평가 실행기는 clean 서비스 checkout을 지정하고, 환경별 요청 추적과 분리된 Dataset Experiment에 기록한다.
-실행 방법은 해당 로컬 폴더의 README를 따른다. 이 문서만으로 다른 개발자가 평가 실행기를 재현할 수 있는 상태는 아니다.
+운영/개발 요청 트레이스와 고정 데이터셋 Experiment는 구분한다. 회귀 평가 실행기는 `lab/evaluation/`,
+validation 데이터는 `lab/datasets/validation-*`에 있다. test 데이터와 실측 결과는 Git에 넣지 않는다.
+평가 실행기는 clean 서비스 checkout을 지정하고, 환경별 요청 추적과 분리된 Dataset Experiment에 기록한다.
+실행 방법은 `lab/evaluation/README.md`를 따른다.
 
-새 평가셋은 텍스트 30건·이미지 16건·멀티턴 6대화(각 3턴)·음성 8건·장애 20건으로 구성한다.
+회귀 validation은 텍스트 30건·이미지 16건·멀티턴 6대화(각 3턴)·음성 8건·장애 20건이다. 도전 47건과 test 23건은 따로 둔다.
 이전 로컬 데이터는 후보 자료로 보존하고, 기대값을 검수한 새 버전만 등록한다.
 현재 서버 내부 실행기와 실제 HTTP/SSE 측정은 측정 범위를 구분해서 기록한다.
 기준선과 비교 버전은 데이터·모델·DB·평가기 버전을 같게 유지하며 실제 코드 SHA를 기록한다.
