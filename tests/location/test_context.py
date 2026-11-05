@@ -1,8 +1,12 @@
 """카카오 장소 이름을 사용자 문장에 쓸 이름으로 줄이는 규칙을 검증한다."""
 
+from datetime import datetime
+
 import pytest
 
-from backend.location.context import KAKAO_DENSITY_CODES, _kakao_name, summarize_kakao
+from backend.location.context import (
+    KAKAO_DENSITY_CODES, _kakao_name, summarize_kakao, summarize_weather, weather_unknown,
+)
 
 
 @pytest.mark.parametrize(("name", "category", "expected"), [
@@ -51,3 +55,16 @@ def doc(name, category, distance=50):
 ])
 def test_park_and_waterside(place, expected):
     assert sorted(nature([place])) == sorted(expected)
+
+
+@pytest.mark.parametrize(("clock", "expected"), [
+    ("00:00", "dawn"), ("05:59", "dawn"),
+    ("06:00", "morning"), ("10:59", "morning"),
+    ("11:00", "afternoon"), ("16:59", "afternoon"),
+    ("17:00", "evening"), ("20:59", "evening"),  # 겨울에 어두워도 저녁이다
+    ("21:00", "night"), ("23:59", "night"),
+])
+def test_time_of_day_follows_clock(clock, expected):
+    now = datetime.fromisoformat(f"2026-12-20T{clock}")
+    assert summarize_weather({"current": {"time": now.isoformat(), "weather_code": 0, "temperature_2m": 1.0}}).time_of_day == expected
+    assert weather_unknown(now).time_of_day == expected

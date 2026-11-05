@@ -4,7 +4,7 @@
 임계값은 scripts/location/probe_*.py로 받은 한국 좌표 7곳 결과를 보고 정했다.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from backend.location.schemas import (
     Density, LocationContext, Nature, NatureHit, PlaceSummary, Provider, TimeOfDay, WeatherSummary,
@@ -334,37 +334,31 @@ def _weather_kind(code: int):
     return "rain"
 
 
-def _time_of_day(now: datetime, sunrise: datetime, sunset: datetime) -> TimeOfDay:
-    if now < sunrise - timedelta(minutes=30) or now > sunset + timedelta(minutes=30):
-        return "night"
-    if now < sunrise + timedelta(hours=1):
+def _time_of_day(now: datetime) -> TimeOfDay:
+    """시계 기준. 겨울에 18시면 어둡지만 사람들은 여름 저녁처럼 지내므로 해 뜨고 지는 시각은 보지 않는다"""
+    if now.hour < 6:
         return "dawn"
-    if now.hour < 12:
+    if now.hour < 11:
         return "morning"
-    if now < sunset - timedelta(hours=1):
+    if now.hour < 17:
         return "afternoon"
-    return "sunset"
+    if now.hour < 21:
+        return "evening"
+    return "night"
 
 
 def summarize_weather(forecast: dict) -> WeatherSummary:
-    """Open-Meteo 응답(current + daily sunrise·sunset, 현지 시간대)"""
-    now = datetime.fromisoformat(forecast["current"]["time"])
-    sunrise = datetime.fromisoformat(forecast["daily"]["sunrise"][0])
-    sunset = datetime.fromisoformat(forecast["daily"]["sunset"][0])
-    time_of_day = _time_of_day(now, sunrise, sunset)
-
+    """Open-Meteo 응답(current, 현지 시간대)"""
     return WeatherSummary(
-        time_of_day=time_of_day,
+        time_of_day=_time_of_day(datetime.fromisoformat(forecast["current"]["time"])),
         weather=_weather_kind(forecast["current"]["weather_code"]),
         temperature_c=forecast["current"]["temperature_2m"],
     )
 
 
 def weather_unknown(now: datetime) -> WeatherSummary:
-    """날씨 API 실패 시. 시간대는 한국 평균 일출 6:30·일몰 18:30으로 어림하고 날씨는 비워 둔다"""
-    sunrise = now.replace(hour=6, minute=30, second=0, microsecond=0)
-    sunset = now.replace(hour=18, minute=30, second=0, microsecond=0)
-    return WeatherSummary(time_of_day=_time_of_day(now, sunrise, sunset), weather=None, temperature_c=None)
+    """날씨 API 실패 시. 시간대만 정하고 날씨는 비워 둔다"""
+    return WeatherSummary(time_of_day=_time_of_day(now), weather=None, temperature_c=None)
 
 
 def build_context(provider: Provider, places: PlaceSummary, weather: WeatherSummary) -> LocationContext:

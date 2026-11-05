@@ -13,7 +13,7 @@ Provider = Literal["kakao", "google", "osm", "kakao_osm"]
 Density = Literal["quiet", "moderate", "busy", "very_busy"]
 # sea: 바다·해변, river: 강·호수·저수지, stream: 계곡·개울
 Nature = Literal["sea", "river", "stream", "mountain", "forest", "park"]
-TimeOfDay = Literal["dawn", "morning", "afternoon", "sunset", "night"]
+TimeOfDay = Literal["dawn", "morning", "afternoon", "evening", "night"]
 Weather = Literal["clear", "cloudy", "fog", "rain", "snow", "storm"]
 
 

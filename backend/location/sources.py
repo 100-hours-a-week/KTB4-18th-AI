@@ -83,7 +83,7 @@ async def fetch_weather(lat: float, lng: float) -> dict:
         return await _get(client, WEATHER_URL, {
             "latitude": lat, "longitude": lng,
             "current": "temperature_2m,weather_code,is_day,precipitation,cloud_cover",
-            "daily": "sunrise,sunset", "timezone": "Asia/Seoul", "forecast_days": 1,
+            "timezone": "Asia/Seoul", "forecast_days": 1,
         })
 
 

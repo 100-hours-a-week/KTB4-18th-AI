@@ -1,11 +1,7 @@
-"""LocationContext를 임베딩 검색어로 바꾼다. 비교 실험용으로 세 방식을 둔다.
+"""LocationContext로 장소 표현(place)과 응답 문장(message)을 LLM 1회로 만든다.
 
-- template_query: 규칙으로 문장을 조립한다. LLM 호출 없음. V1의 사용자 원문에 해당
-- llm_query(style="situation"): V1 recommend_query처럼 상황·분위기 명사구로 재구성한다
-- llm_query(style="sound"): 악기·질감·템포 같은 소리 묘사로 번역한다
-
-검색은 v4 쿼리 어댑터(사용자 검색어 분포로 학습)를 거치므로 situation이 분포에 가장 가깝다는 가설이다.
-어느 쪽을 쓸지는 scripts/location/compare_queries.py 결과를 보고 정한다.
+LLM은 이곳이 어떤 곳인지만 판단한다. 검색 문장("~에서 듣기 좋은 노래")과 날씨·시간 문장은
+코드(backend/location/blend.py)가 만들고 따로 임베딩해 섞는다. 한 문장에 다 넣으면 비가 밤·장소를 덮었다.
 """
 
 import json
@@ -17,56 +13,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.location.schemas import LocationContext
 
-WEATHER_WORDS = {"clear": "맑은", "cloudy": "흐린", "fog": "안개 낀", "rain": "비 오는", "snow": "눈 내리는", "storm": "폭풍우 치는"}
-TIME_WORDS = {"dawn": "새벽", "morning": "아침", "afternoon": "오후", "sunset": "해 질 녘", "night": "밤"}
-DENSITY_WORDS = {"quiet": "한적한", "moderate": "여유로운", "busy": "활기찬", "very_busy": "북적이는"}
-# 밀도는 가게 수로 잰 낮 기준 상권 규모라, 붐빔을 뜻하는 단어는 낮·맑음/흐림일 때만 쓴다
-# (예: 비 오는 밤 속초 청초호 전망대에 "활기찬"이 붙어 신나는 K-pop이 나왔다)
-LIVELY_DENSITIES = ("busy", "very_busy")
-LIVELY_TIMES = ("morning", "afternoon")
-LIVELY_WEATHERS = ("clear", "cloudy")
-# {n}은 지형 이름. 이름이 없거나 너무 길면 NATURE_PLAIN을 쓴다
-NATURE_NAMED = {"sea": "{n} 바닷가", "river": "{n} 물가", "mountain": "{n} 산자락", "park": "{n} 공원"}
-NATURE_PLAIN = {
-    "sea": "바닷가", "river": "강가", "stream": "계곡 물소리가 들리는 곳",
-    "mountain": "산자락", "forest": "숲길", "park": "공원",
-}
-MAX_NAME_LEN = 15  # "경주역사유적지구 대릉원지구"처럼 긴 이름은 검색어를 흐린다
-
-
-def template_query(ctx: LocationContext) -> str:
-    places = []
-    for hit in ctx.nature[:3]:
-        if hit.name and len(hit.name) <= MAX_NAME_LEN and hit.kind in NATURE_NAMED:
-            places.append(NATURE_NAMED[hit.kind].format(n=hit.name))
-        else:
-            places.append(NATURE_PLAIN[hit.kind])
-    if not places:
-        places = ["빌딩 숲 사이 거리" if "업무지구" in ctx.place_traits else "도심 거리"]
-
-    traits = [t for t in ctx.place_traits if t != "업무지구"][:2]
-    near = f" ({', '.join(traits)} 근처)" if traits else ""
-    lively_now = ctx.time_of_day in LIVELY_TIMES and ctx.weather in LIVELY_WEATHERS
-    density = "" if ctx.density in LIVELY_DENSITIES and not lively_now else DENSITY_WORDS[ctx.density] + " "
-    weather = WEATHER_WORDS[ctx.weather] + " " if ctx.weather else ""  # 날씨 API 실패 시 비어 있다
-    return (
-        f"{weather}{TIME_WORDS[ctx.time_of_day]}, "
-        f"{density}{', '.join(places)}{near}에서 듣기 좋은 음악"
-    )
-
 
 class LocationQuery(BaseModel):
-    """LLM 출력. 곡이 정해지기 전에 만드는 검색 조건과, 추천 곡과 함께 보여줄 문장이다."""
+    """LLM 출력. 검색에 쓸 장소 표현과, 추천 곡과 함께 보여줄 문장이다."""
 
     model_config = ConfigDict(extra="forbid")
-    music_query: str = Field(max_length=200)
-    mood: list[str] = Field(max_length=4)
+    place: str = Field(max_length=30)
     # 목표는 40자 안팎. 조금 넘었다고 503이 되지 않도록 상한은 넉넉히 둔다
     message: str = Field(max_length=80)
 
 
 # NOTE: V1 classify·answer 프롬프트(backend/recommendation/intent.py, backend/chat/answer.py)처럼
-# 입력 해석 → 분위기 판단 → 필드별 규칙 순서로 나눈다. 두 방식이 music_query 규칙만 다르다.
+# 입력 해석 → 지어내지 않기 → 필드별 규칙 순서로 나눈다.
 _INPUT_RULES = """사용자가 지금 있는 장소를 측정한 값을 받아 지정된 JSON 필드를 채우세요.
 
 입력 해석
@@ -74,38 +32,23 @@ _INPUT_RULES = """사용자가 지금 있는 장소를 측정한 값을 받아 �
 - nature는 가까운 순이며 distance_m은 미터입니다. 300m보다 먼 지형은 약하게만 반영하세요.
   name이 없는 지형의 이름을 지어내지 마세요.
 - daytime_commercial_scale은 반경 500m의 가게 수로 잰 낮 기준 상권 규모이며, 지금 붐비는 정도가 아닙니다.
-- place_traits는 근처 장소 유형이며 분위기 힌트로만 쓰세요.
+- place_traits는 근처 장소 유형입니다.
 - weather가 null이면 날씨를 측정하지 못한 것이니 날씨를 언급하지 마세요.
 
-분위기 판단
-- 분위기는 mood에만 쓰고, 측정값(날씨·시간대·지형·상권)에서 추론하세요.
+지어내지 않기
 - 측정값에 없는 사실과 사용자의 감정(설레는, 외로운 등)은 지어내지 마세요.
-  근거 없이 감성·포근·낭만 같은 말을 덧붙이지 마세요.
-- 새벽이거나 비·눈·안개·폭풍일 때는 '활기찬', '신나는'처럼 붐빔을 단정하는 표현을 쓰지 마세요.
-- 밤에는 place_traits에 먹자골목·술집처럼 밤에 붐비는 상권이 있을 때만 활기를 쓸 수 있습니다.
-- quiet인데 북적이는처럼 측정값과 정반대인 분위기를 만들지 마세요.
+- 새벽이거나 비·눈·안개·폭풍일 때는 '활기찬', '북적이는'처럼 붐빔을 단정하는 표현을 쓰지 마세요.
 """
-_QUERY_RULES = {
-    # V1 classify의 recommend_query 형식을 따른다
-    "situation": """
-music_query
-그 자리에 선 사람이 음악 검색창에 쓸 법한 한국어 명사구 하나. 예: "비 오는 밤 바닷가에서 듣기 좋은 노래".
-- 분위기 형용사는 넣지 마세요. mood에 따로 쓰면 코드가 합칩니다.
-- 이 장소를 다른 곳과 구별 짓는 특징(바다, 산, 강, 업무지구, 테마거리 등)이 있으면 하나 이상 살리세요.
-- 지역명·장소 이름은 쓰지 마세요. 입력에 없는 지명을 지식으로 덧붙이지도 마세요.
-- "추천해줘" 같은 요청 표현, 악기·음색·템포 같은 소리 묘사, 곡 제목·아티스트 이름은 넣지 마세요.
-- 100자 이내로 쓰세요.
-""",
-    "sound": """
-music_query
-장소 묘사를 그대로 옮기지 말고 음악의 분위기·템포·질감·악기·장르 느낌으로 번역한 한 문장(200자 이내).
-- 지역명·장소 이름, 곡 제목·아티스트 이름은 쓰지 마세요.
-""",
-}
+# NOTE: 장소 단어 예시를 주면 그대로 베낀다(mood 예시 "차분한"이 5곳 중 4곳). 입력에 있는 말을 쓰게 한다
+_PLACE_RULES = """
+place
+이곳이 어떤 곳인지 나타내는 한국어 명사구 하나(1~3단어). 코드가 "{place}에서 듣기 좋은 노래"로 검색합니다.
+- 가까운 nature의 종류나 place_traits에 이곳을 나타내는 말이 있으면 그 말을 쓰세요.
+  지형·장소 유형이 없으면 daytime_commercial_scale로 판단하세요.
+- 날씨·시간대·분위기 단어는 넣지 마세요. 코드가 따로 섞습니다.
+- 지역명·장소 이름은 쓰지 마세요.
+"""
 _OUTPUT_RULES = """
-mood
-측정값에서 추론한 음악 분위기를 '~한' 꼴 형용사로 1~2개. 가장 알맞은 것을 먼저 쓰세요.
-
 message
 추천 곡 목록 위에 보여줄 한국어 문장. 부드러운 해요체로 40자 안팎.
 예: "비 오는 저녁 망원한강공원이네요. 강바람 맞으며 들어 보세요."
@@ -113,7 +56,7 @@ message
   시·도부터 이어지는 주소 전체는 쓰지 마세요.
 - 곡은 아직 정해지지 않았습니다. 곡 이야기나 곡의 소리·가사·무드를 지어내지 마세요.
 """
-INSTRUCTIONS = {style: _INPUT_RULES + rules + _OUTPUT_RULES for style, rules in _QUERY_RULES.items()}
+INSTRUCTIONS = _INPUT_RULES + _PLACE_RULES + _OUTPUT_RULES
 
 
 # 검색어에 남은 지형 이름을 바꿔 넣을 일반 명사
@@ -121,6 +64,9 @@ NATURE_WORDS = {"sea": "바닷가", "river": "강가", "stream": "계곡", "moun
 # "광안리해수욕장"을 "광안리"로만 써도 지우도록 떼어 볼 꼬리말. 긴 것부터 확인한다
 NAME_SUFFIXES = ("해수욕장", "국립공원", "한강공원", "호수", "해변", "공원", "산", "강", "천")
 REGION_SUFFIXES = ("특별자치시", "특별자치도", "특별시", "광역시", "시", "도", "군", "구", "동", "읍", "면")
+# 사람들이 장소 종류처럼 쓰는 이름은 남긴다. 어댑터 학습 쿼리에 "한강"은 52번, 바꿔 넣을 "강가"는 1번 나와
+# "강가"로 바꾸면 어댑터가 못 배운 말이 되어 river 가사 곡이 나왔다
+KEPT_NAMES = ("한강",)
 
 
 def _name_forms(name: str, suffixes: tuple[str, ...]) -> list[str]:
@@ -142,7 +88,7 @@ def strip_names(query: str, ctx: LocationContext) -> str:
     # (이름, 이름 뒤에 함께 지울 패턴, 바꿔 넣을 말)
     replacements = []
     for hit in ctx.nature:
-        if hit.name:
+        if hit.name and hit.name not in KEPT_NAMES:
             replacements += [(form, "", NATURE_WORDS[hit.kind]) for form in _name_forms(hit.name, NAME_SUFFIXES)]
     for part in (ctx.region or "").split():
         # 지역명만 지우면 "대포동의 오후"가 "의 오후"가 되므로 바로 뒤의 "의"도 함께 지운다
@@ -151,18 +97,9 @@ def strip_names(query: str, ctx: LocationContext) -> str:
     # 긴 이름부터 바꿔야 "광안리해수욕장"이 "광안리"만 지워져 "해수욕장"이 남는 일이 없다
     for name, after, word in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
         query = re.sub(re.escape(name) + after, word, query)
-    return " ".join(query.split())
-
-
-def with_mood(query: str, mood: list[str]) -> str:
-    """mood 첫 단어를 검색어의 끝 "노래"·"음악" 앞에 넣는다. 검색어 예시에 형용사를 넣으면 LLM이 그 형용사를 베껴서
-    (비 오는 밤 5곳 중 4곳이 예시의 "차분한") 분위기는 예시 없는 mood로 따로 받는다"""
-    if not mood:
-        return query
-    for noun in ("노래", "음악"):
-        if query.endswith(noun):
-            return f"{query[:-len(noun)]}{mood[0]} {noun}"
-    return f"{query} {mood[0]}"
+    # "해운대 바닷가"는 "바닷가 바닷가"가 되므로 바로 이어 반복되는 단어는 하나만 남긴다
+    words = query.split()
+    return " ".join(w for i, w in enumerate(words) if i == 0 or w != words[i - 1])
 
 
 def _llm_input(ctx: LocationContext) -> str:
@@ -178,10 +115,10 @@ def _llm_input(ctx: LocationContext) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def llm_query(client: OpenAI, ctx: LocationContext, style: str = "situation") -> LocationQuery:
+def llm_query(client: OpenAI, ctx: LocationContext) -> LocationQuery:
     response = client.responses.create(
         model=os.environ["LLM_MODEL"],
-        instructions=INSTRUCTIONS[style],
+        instructions=INSTRUCTIONS,
         input=_llm_input(ctx),
         text={"format": {
             "type": "json_schema", "name": "location_query", "strict": True,

@@ -34,10 +34,7 @@ def kakao_raw(food_count=300):
 
 
 def weather_raw():
-    return {
-        "current": {"time": "2026-10-27T14:00", "temperature_2m": 20.0, "weather_code": 0},
-        "daily": {"sunrise": ["2026-10-27T06:40"], "sunset": ["2026-10-27T17:35"]},
-    }
+    return {"current": {"time": "2026-10-27T14:00", "temperature_2m": 20.0, "weather_code": 0}}
 
 
 def track():
@@ -66,14 +63,14 @@ def calls(monkeypatch):
 
     def location_query(ctx):
         state["contexts"].append(ctx)
-        return LocationQuery(music_query="맑은 오후 바닷가에서 듣기 좋은 노래", mood=["청량한"], message=MESSAGE)
+        return LocationQuery(place="해운대 바닷가", message=MESSAGE)
 
-    def search(query):
-        state["searched"].append(query)
+    def search(place, weather, temperature_c, time_of_day, month):
+        state["searched"].append((place, weather, time_of_day))
         return [track()]
 
     monkeypatch.setattr(service, "_location_query", location_query)
-    monkeypatch.setattr(service, "_search", search)
+    monkeypatch.setattr(service, "_blend_search", search)
     return state
 
 
@@ -98,8 +95,8 @@ def test_success_returns_message_and_tracks(calls):
 
     assert response.status_code == 200
     assert response.json() == {"message": MESSAGE, "tracks": [track().model_dump()]}
-    # 검색에는 mood 첫 단어를 합친 문장이 들어간다
-    assert calls["searched"] == ["맑은 오후 바닷가에서 듣기 좋은 청량한 노래"]
+    # 검색에는 이름을 지운 장소 표현과 측정한 날씨·시간대가 따로 들어간다
+    assert calls["searched"] == [("바닷가", "clear", "afternoon")]
     ctx = calls["contexts"][0]
     assert ctx.provider == "kakao"
     assert [hit.kind for hit in ctx.nature] == ["sea"]

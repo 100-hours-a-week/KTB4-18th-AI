@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import functools
 import logging
 import os
 import time
@@ -29,13 +30,17 @@ from backend.location import osm, sources
 from backend.location.context import (
     build_context, combine_kakao_osm, summarize_kakao, summarize_osm_nature, summarize_weather, weather_unknown,
 )
-from backend.location.query import LocationQuery, llm_query, strip_names, with_mood
+from backend.location.query import LocationQuery, llm_query, strip_names
 from backend.location.schemas import (
     LocationContext, LocationRecommendationRequest, LocationRecommendationResponse, PlaceSummary, Provider,
 )
 from backend.providers.openrouter import OPENROUTER_BASE_URL, get_embedding_client
 from backend.recommendation.embedding import embed_query
-from backend.recommendation.retrieval import vector_recommendation
+from backend.location.blend import (
+    POOL_SIZE, choose_tracks, ingredient_phrase, place_phrase, query_vector, slot_phrases,
+)
+from backend.recommendation.adapter import search_space
+from backend.recommendation.retrieval import candidate_pools_db
 
 # NOTE: uvicorn 로거를 써야 별도 설정 없이 INFO 줄이 컨테이너 로그에 남는다(STT·사진과 같은 방식).
 logger = logging.getLogger("uvicorn.error")
@@ -90,7 +95,7 @@ def _places(raw: dict) -> tuple[PlaceSummary, Provider]:
 
 
 def _location_query(ctx: LocationContext) -> LocationQuery:
-    """LLM 1회로 검색어와 응답 문장(message)을 함께 만든다"""
+    """LLM 1회로 장소 표현(place)과 응답 문장(message)을 함께 만든다"""
     key = os.getenv("OPENROUTER_LLM_API_KEY", "").strip()
     if not key or key.startswith("<") or not os.getenv("LLM_MODEL", "").strip():
         raise _model_unavailable()
@@ -104,8 +109,24 @@ def _location_query(ctx: LocationContext) -> LocationQuery:
         raise _error(503, "MODEL_RESPONSE_INVALID", "모델 응답을 해석하지 못했습니다. 잠시 후 다시 시도하세요.") from error
 
 
-def _search(query: str) -> list:
-    return vector_recommendation(embed_query(get_embedding_client(), query))
+@functools.cache
+def _fixed_embedding(text: str) -> tuple[float, ...]:
+    """날씨말·시간 문장은 몇 개뿐이라 프로세스마다 처음 한 번만 임베딩한다. 실패하면 캐시하지 않는다"""
+    return tuple(embed_query(get_embedding_client(), text))
+
+
+def _blend_search(place: str, weather: str | None, temperature_c: float | None, time_of_day: str, month: int) -> list:
+    """장소 표현은 요청마다, 날씨말·특별 칸 문장은 캐시로 임베딩해 칸별로 곡을 고른다"""
+    space = search_space()
+    place_q = query_vector(space, embed_query(get_embedding_client(), place_phrase(place)))
+    ingredient_q = query_vector(space, _fixed_embedding(ingredient_phrase(weather, temperature_c, month)))
+    slot_qs = [query_vector(space, _fixed_embedding(p)) for p in slot_phrases(weather, time_of_day, month)]
+
+    pools, vectors = candidate_pools_db([place_q, ingredient_q, *slot_qs], space, POOL_SIZE)
+    return choose_tracks(
+        space, place_q, ingredient_q, slot_qs,
+        {"place": pools[0], "ingredient": pools[1], "slots": pools[2:]}, vectors,
+    )
 
 
 async def _recommend(lat: float, lng: float) -> tuple[LocationQuery, list, Provider, dict]:
@@ -123,7 +144,10 @@ async def _recommend(lat: float, lng: float) -> tuple[LocationQuery, list, Provi
     # OpenAI SDK·DB 호출은 동기 함수라 스레드에서 돌린다
     query = await asyncio.to_thread(_location_query, ctx)
     timings["query_ms"] = round((time.monotonic() - started) * 1000)
-    tracks = await asyncio.to_thread(_search, with_mood(strip_names(query.music_query, ctx), query.mood))
+    tracks = await asyncio.to_thread(
+        _blend_search, strip_names(query.place, ctx), ctx.weather, ctx.temperature_c, ctx.time_of_day,
+        datetime.now(KST).month,
+    )
     return query, tracks, provider, timings
 
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from backend.location.query import strip_names, with_mood
+from backend.location.query import strip_names
 from backend.location.schemas import LocationContext, NatureHit
 
 
@@ -28,6 +28,8 @@ def ctx(region=None, nature=()):
      "흐린 오후에 듣는 노래"),
     ("서울 송파구 먹자골목에서 듣는 노래", ctx(region="서울특별시 송파구 방이2동"),
      "먹자골목에서 듣는 노래"),
+    # 장소 표현에 이름이 새면 종류 명사와 겹친다
+    ("해운대 바닷가", ctx(nature=[NatureHit(kind="sea", distance_m=80, name="해운대해수욕장")]), "바닷가"),
 ])
 def test_names_are_removed(query, context, expected):
     assert strip_names(query, context) == expected
@@ -39,19 +41,13 @@ def test_short_stem_is_kept():
     assert strip_names(query, ctx(region="서울특별시 중구 명동")) == query
 
 
+def test_kept_name_is_not_replaced():
+    """한강은 어댑터가 아는 말이라 강가로 바꾸지 않는다"""
+    context = ctx(nature=[NatureHit(kind="river", distance_m=36, name="한강")])
+    assert strip_names("한강", context) == "한강"
+
+
 def test_query_without_names_is_unchanged():
     query = "비 오는 오후 강가에서 듣기 좋은 잔잔한 노래"
     context = ctx(region="서울특별시 마포구 망원1동", nature=[NatureHit(kind="river", distance_m=50, name="한강")])
     assert strip_names(query, context) == query
-
-
-@pytest.mark.parametrize(("query", "mood", "expected"), [
-    ("비 오는 밤 바닷가에서 듣기 좋은 노래", ["차분한", "잔잔한"], "비 오는 밤 바닷가에서 듣기 좋은 차분한 노래"),
-    # 판교에서 실제로 "업무지구 오후에 듣는 음악 활기찬"이 됐다
-    ("업무지구 오후에 듣는 음악", ["활기찬"], "업무지구 오후에 듣는 활기찬 음악"),
-    # "노래"·"음악"으로 끝나지 않으면 뒤에 붙인다
-    ("비 오는 밤 바닷가의 플레이리스트", ["차분한"], "비 오는 밤 바닷가의 플레이리스트 차분한"),
-    ("비 오는 밤 바닷가에서 듣기 좋은 노래", [], "비 오는 밤 바닷가에서 듣기 좋은 노래"),
-])
-def test_mood_is_merged(query, mood, expected):
-    assert with_mood(query, mood) == expected
