@@ -1,8 +1,8 @@
 """OSM 지형 측정: 좌표 주변 지형까지의 거리, 들어 있는 용도지역·국립공원, 5km 안 봉우리.
 
 입력 파일은 scripts/location/extract_osm.py가 만든 features.jsonl이다(LOCATION_OSM_FEATURES로 경로 변경).
-shapely와 파일은 선택 사항이다. 둘 중 하나라도 없으면 available()이 False이고, 서비스는 카카오만으로 판정한다.
-서버에 OSM을 어떻게 둘지(메모리·PostGIS)는 아직 정하지 않았다. 지금은 첫 요청 때 파일을 메모리에 올린다.
+OSM 판정이 기본이고, 파일이 없으면 available()이 False라 서비스는 카카오만으로 판정한다(폴백).
+서버에 파일을 어떻게 둘지(메모리·PostGIS)는 아직 정하지 않았다. 지금은 첫 요청 때 파일을 메모리에 올린다.
 """
 
 import json

@@ -541,6 +541,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "shapely" },
     { name = "silero-vad-lite" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
@@ -552,7 +553,6 @@ dev = [
 ]
 location-exp = [
     { name = "osmium" },
-    { name = "shapely" },
 ]
 worker = [
     { name = "essentia-tensorflow" },
@@ -573,6 +573,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.5" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "python-multipart", specifier = ">=0.0.20" },
+    { name = "shapely", specifier = ">=2.2.0" },
     { name = "silero-vad-lite", specifier = "==0.2.1" },
     { name = "sqlalchemy" },
     { name = "uvicorn", specifier = ">=0.52.4" },
@@ -580,10 +581,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]
-location-exp = [
-    { name = "osmium", specifier = ">=4.3.2" },
-    { name = "shapely", specifier = ">=2.2.0" },
-]
+location-exp = [{ name = "osmium", specifier = ">=4.3.2" }]
 worker = [
     { name = "essentia-tensorflow", specifier = "==2.1b6.dev1389" },
     { name = "numpy", specifier = "<2" },

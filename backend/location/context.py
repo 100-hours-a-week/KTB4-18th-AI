@@ -204,7 +204,7 @@ def summarize_google(dense: list[dict], nature_places: list[dict]) -> PlaceSumma
 
 
 # ── OSM ───────────────────────────────────────────────
-# 입력은 scripts/location/measure_osm.py가 잰 값(종류별 가까운 지형 목록 + 주변 고도 기복)이다.
+# 입력은 osm.measure가 잰 값(종류별 가까운 지형 목록)에 서비스가 고도 기복(relief)을 더한 것이다.
 # 밀도는 OSM으로 잴 수 없어 카카오 값을 받는다.
 
 # 연못·하수처리장·배수로 등은 강·호수로 보지 않는다 (예: 화랑공원 생태호수)
