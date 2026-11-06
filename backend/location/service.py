@@ -26,7 +26,7 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from backend.core.errors import _error, _model_unavailable
-from backend.location import osm, sources
+from backend.location import elevation, osm, sources
 from backend.location.context import (
     build_context, combine_kakao_osm, summarize_kakao, summarize_osm_nature, summarize_weather, weather_unknown,
 )
@@ -60,8 +60,8 @@ async def _gather_sources(lat: float, lng: float) -> dict:
         # OSM 측정은 CPU 계산이라 이벤트 루프를 막지 않게 스레드에서 돌린다
         # NOTE: 시간을 넘겨도 스레드는 취소되지 않고 끝까지 실행된 뒤 버려진다
         calls["osm"] = asyncio.to_thread(osm.measure, lat, lng)
-        # 고도 기복은 OSM 산 판정에만 쓴다. OSM 없이 부르면 좌표 81개만큼 Open-Meteo 한도를 깎고 버린다
-        calls["relief"] = sources.fetch_relief(lat, lng)
+        # 고도 기복은 OSM 산 판정에만 쓴다. 파일에서 81칸을 읽는 디스크 작업이라 스레드에서 돌린다
+        calls["relief"] = asyncio.to_thread(elevation.relief, lat, lng)
 
     timed = [asyncio.wait_for(call, SOURCE_TIMEOUT_S) for call in calls.values()]
     results = await asyncio.gather(*timed, return_exceptions=True)

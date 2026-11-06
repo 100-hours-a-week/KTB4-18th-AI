@@ -64,7 +64,7 @@ def _query_around(lat: float, lng: float, radius_m: float):
 
 
 def measure(lat: float, lng: float) -> dict:
-    """summarize_osm_nature·combine_kakao_osm에 넣을 측정값. relief는 서비스가 고도 API로 채운다"""
+    """summarize_osm_nature·combine_kakao_osm에 넣을 측정값. relief는 서비스가 고도 파일(elevation.relief)로 채운다"""
     nearest, landuse, protected = {}, [], []
     for row, dist, area in _query_around(lat, lng, SEARCH_M):
         # 용도지역·공원 구역은 거리 대신 "그 안에 있나"만 본다

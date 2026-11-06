@@ -1,11 +1,10 @@
-"""위치 추천의 외부 API 호출: 카카오 로컬, Open-Meteo 날씨·고도.
+"""위치 추천의 외부 API 호출: 카카오 로컬, Open-Meteo 날씨. 고도는 파일에서 읽는다(backend/location/elevation.py).
 
 모두 비동기다. 서비스가 asyncio.gather로 동시에 부르므로 전체 대기는 가장 느린 호출 하나 정도다.
 응답은 가공하지 않고 그대로 돌려준다. 판정은 backend/location/context.py가 한다.
 """
 
 import asyncio
-import math
 import os
 
 import httpx
@@ -14,14 +13,11 @@ KAKAO_CATEGORY_URL = "https://dapi.kakao.com/v2/local/search/category.json"
 KAKAO_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 KAKAO_REGION_URL = "https://dapi.kakao.com/v2/local/geo/coord2regioncode.json"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
-ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 
 DENSITY_RADIUS_M = 500
 ATTRACTION_RADIUS_M = 2000
 # 밀도 판정은 FD6·CE7·CS2만 쓰지만, 나머지는 실험 페이지·대시보드에서 동네 성격을 볼 때 쓴다
 DENSITY_CODES = ("FD6", "CE7", "CS2", "AD5", "CT1", "AT4", "SW8")
-# 9×9 격자, 250m 간격 → ±1km. 고도 API는 좌표 하나를 호출 1회로 세서 81회로 계산된다
-RELIEF_GRID_STEP_M = 250
 
 
 class KakaoNotConfigured(Exception):
@@ -86,17 +82,3 @@ async def fetch_weather(lat: float, lng: float) -> dict:
             "timezone": "Asia/Seoul", "forecast_days": 1,
         })
 
-
-async def fetch_relief(lat: float, lng: float) -> dict:
-    """주변 ±1km 격자의 해발고도와 최고·최저 차이(기복). 산 판정과 산 이름 고르기에 쓴다"""
-    d_lat = RELIEF_GRID_STEP_M / 110_540
-    d_lng = RELIEF_GRID_STEP_M / (111_320 * math.cos(math.radians(lat)))
-    offsets = range(-4, 5)
-    lats = [round(lat + i * d_lat, 5) for i in offsets for _ in offsets]
-    lngs = [round(lng + j * d_lng, 5) for _ in offsets for j in offsets]
-    async with httpx.AsyncClient(timeout=30) as client:
-        data = await _get(client, ELEVATION_URL, {
-            "latitude": ",".join(map(str, lats)), "longitude": ",".join(map(str, lngs)),
-        })
-    elevation = data["elevation"]
-    return {"min_m": min(elevation), "max_m": max(elevation), "relief_m": max(elevation) - min(elevation)}

@@ -57,7 +57,13 @@ def calls(monkeypatch):
 
     monkeypatch.setattr(service.sources, "fetch_kakao", source("kakao"))
     monkeypatch.setattr(service.sources, "fetch_weather", source("weather"))
-    monkeypatch.setattr(service.sources, "fetch_relief", source("relief"))
+
+    def relief(_lat, _lng):
+        if isinstance(state["relief"], Exception):
+            raise state["relief"]
+        return state["relief"]
+
+    monkeypatch.setattr(service.elevation, "relief", relief)
     monkeypatch.setattr(service.osm, "available", lambda: state["osm"] is not None)
     monkeypatch.setattr(service.osm, "measure", lambda _lat, _lng: state["osm"])
 
@@ -153,11 +159,11 @@ def test_relief_failure_skips_only_mountain(calls):
 def test_relief_is_not_fetched_without_osm(calls, monkeypatch):
     fetched = []
 
-    async def relief(_lat, _lng):
+    def relief(_lat, _lng):
         fetched.append(True)
         return calls["relief"]
 
-    monkeypatch.setattr(service.sources, "fetch_relief", relief)
+    monkeypatch.setattr(service.elevation, "relief", relief)
 
     response = TestClient(app).post(URL, json=HAEUNDAE)
 
