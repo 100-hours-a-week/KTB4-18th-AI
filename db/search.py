@@ -105,6 +105,23 @@ def search(
     return tracks
 
 
+def track_vectors(session: Session, track_ids: list[str], space: str = "gemini") -> dict[str, np.ndarray]:
+    """검색 공간의 곡 벡터. 검색어 벡터와 내적하면 search()의 점수와 같은 값이 나오게 돌려준다.
+
+    space="v4": emb_v4 그대로. 마지막 칸의 허브 보정(−β·r(s))이 길이에 들어 있어 정규화하지 않는다
+    space="gemini": emb_gemini를 정규화. 정규화한 검색어와 내적하면 코사인이다
+    """
+
+    column = search_column(space)
+    rows = session.execute(
+        select(TrackRow.track_id, column).where(TrackRow.track_id.in_([int(i) for i in track_ids]))
+    ).all()
+    vectors = {str(track_id): np.asarray(vec, dtype=np.float32) for track_id, vec in rows}
+    if space == "v4":
+        return vectors
+    return {track_id: l2norm(vec) for track_id, vec in vectors.items()}
+
+
 def lookup(
     session: Session,
     song_title: str = None,

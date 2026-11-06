@@ -15,6 +15,7 @@ dependencies = [
     "psycopg[binary]>=3.3.5",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.20",
+    "shapely>=2.2.0",  # V3 위치 추천 OSM 지형 거리·면적(backend/location/osm.py). OSM 파일이 없으면 쓰지 않고 카카오만으로 판정한다
     "silero-vad-lite==0.2.1",
     "sqlalchemy",
     "uvicorn>=0.52.4",
@@ -23,6 +24,13 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+]
+
+# V3 위치 추천: 한국 OSM 원본(pbf)에서 지형 파일(features.jsonl)을 뽑을 때만 쓴다(scripts/location/extract_osm.py).
+# 서버는 뽑아 둔 파일만 읽으므로 이미지에는 넣지 않는다.
+# 설치: uv sync --group location-exp
+location-exp = [
+    "osmium>=4.3.2",
 ]
 
 # gemini-embedding-2로 전환하며 CLAP(laion-clap·torch·torchvision)은 완전히 제거했다.
