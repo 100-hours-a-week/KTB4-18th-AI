@@ -1,11 +1,14 @@
 """추천·조회 DB 연결."""
 
 from db.types import Track
+from langsmith import traceable
 from backend.core.errors import _catalog_unavailable
 from backend.recommendation.adapter import search_space, to_v4_query
 from backend.recommendation.counts import DEFAULT_TRACK_COUNT
 
 
+@traceable(name="음악 벡터 검색", run_type="retriever",
+           process_inputs=lambda values: {k: v for k, v in values.items() if k != "qvec"})
 def vector_recommendation(
     qvec: list[float],
     exclude_ids: set[int] = None,
@@ -53,6 +56,7 @@ def candidate_pools_db(queries: list, space: str, k: int) -> tuple[list[list[Tra
     return pools, vectors
 
 
+@traceable(name="곡·아티스트 조회", run_type="retriever")
 def lookup_tracks_db(
     song_title: str = None, artist: str = None, exclude_ids: set[int] = None,
     limit: int = DEFAULT_TRACK_COUNT, seed_artist: str = None,
