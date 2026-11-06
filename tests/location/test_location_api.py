@@ -63,7 +63,7 @@ def calls(monkeypatch):
 
     def location_query(ctx):
         state["contexts"].append(ctx)
-        return LocationQuery(place="해운대 바닷가", message=MESSAGE)
+        return LocationQuery(place="해수욕장", message=MESSAGE)
 
     def search(place, weather, temperature_c, time_of_day, month):
         state["searched"].append((place, weather, time_of_day))
@@ -95,8 +95,8 @@ def test_success_returns_message_and_tracks(calls):
 
     assert response.status_code == 200
     assert response.json() == {"message": MESSAGE, "tracks": [track().model_dump()]}
-    # 검색에는 이름을 지운 장소 표현과 측정한 날씨·시간대가 따로 들어간다
-    assert calls["searched"] == [("바닷가", "clear", "afternoon")]
+    # 검색에는 LLM이 고른 장소 단어와 측정한 날씨·시간대가 따로 들어간다
+    assert calls["searched"] == [("해수욕장", "clear", "afternoon")]
     ctx = calls["contexts"][0]
     assert ctx.provider == "kakao"
     assert [hit.kind for hit in ctx.nature] == ["sea"]
@@ -239,5 +239,5 @@ def test_log_has_no_location(calls, caplog):
         TestClient(app).post(URL, json=HAEUNDAE)
 
     assert f"Location request: request_id={REQUEST_ID} provider=kakao tracks=1" in caplog.text
-    for leaked in ("35.1", "129.1", "해운대", "바닷가", MESSAGE):
+    for leaked in ("35.1", "129.1", "해운대", "해수욕장", MESSAGE):
         assert leaked not in caplog.text

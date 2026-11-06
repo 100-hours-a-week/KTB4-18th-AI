@@ -30,7 +30,7 @@ from backend.location import osm, sources
 from backend.location.context import (
     build_context, combine_kakao_osm, summarize_kakao, summarize_osm_nature, summarize_weather, weather_unknown,
 )
-from backend.location.query import LocationQuery, llm_query, strip_names
+from backend.location.query import LocationQuery, llm_query
 from backend.location.schemas import (
     LocationContext, LocationRecommendationRequest, LocationRecommendationResponse, PlaceSummary, Provider,
 )
@@ -95,7 +95,7 @@ def _places(raw: dict) -> tuple[PlaceSummary, Provider]:
 
 
 def _location_query(ctx: LocationContext) -> LocationQuery:
-    """LLM 1회로 장소 표현(place)과 응답 문장(message)을 함께 만든다"""
+    """LLM 1회로 장소 단어(place)와 응답 문장(message)을 함께 만든다"""
     key = os.getenv("OPENROUTER_LLM_API_KEY", "").strip()
     if not key or key.startswith("<") or not os.getenv("LLM_MODEL", "").strip():
         raise _model_unavailable()
@@ -111,14 +111,14 @@ def _location_query(ctx: LocationContext) -> LocationQuery:
 
 @functools.cache
 def _fixed_embedding(text: str) -> tuple[float, ...]:
-    """날씨말·시간 문장은 몇 개뿐이라 프로세스마다 처음 한 번만 임베딩한다. 실패하면 캐시하지 않는다"""
+    """장소 단어·날씨말·시간 문장은 정해진 몇 개뿐이라 프로세스마다 처음 한 번만 임베딩한다. 실패하면 캐시하지 않는다"""
     return tuple(embed_query(get_embedding_client(), text))
 
 
 def _blend_search(place: str, weather: str | None, temperature_c: float | None, time_of_day: str, month: int) -> list:
-    """장소 표현은 요청마다, 날씨말·특별 칸 문장은 캐시로 임베딩해 칸별로 곡을 고른다"""
+    """장소·날씨말·특별 칸 문장을 따로 임베딩해 칸별로 곡을 고른다"""
     space = search_space()
-    place_q = query_vector(space, embed_query(get_embedding_client(), place_phrase(place)))
+    place_q = query_vector(space, _fixed_embedding(place_phrase(place)))
     ingredient_q = query_vector(space, _fixed_embedding(ingredient_phrase(weather, temperature_c, month)))
     slot_qs = [query_vector(space, _fixed_embedding(p)) for p in slot_phrases(weather, time_of_day, month)]
 
@@ -145,7 +145,7 @@ async def _recommend(lat: float, lng: float) -> tuple[LocationQuery, list, Provi
     query = await asyncio.to_thread(_location_query, ctx)
     timings["query_ms"] = round((time.monotonic() - started) * 1000)
     tracks = await asyncio.to_thread(
-        _blend_search, strip_names(query.place, ctx), ctx.weather, ctx.temperature_c, ctx.time_of_day,
+        _blend_search, query.place, ctx.weather, ctx.temperature_c, ctx.time_of_day,
         datetime.now(KST).month,
     )
     return query, tracks, provider, timings

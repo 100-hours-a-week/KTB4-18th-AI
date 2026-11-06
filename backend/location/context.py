@@ -35,7 +35,7 @@ KAKAO_DENSITY_LEVELS = ((10, "quiet"), (150, "moderate"), (500, "busy"))
 
 # 관광명소(AT4) category_name의 마지막 단계에 이 단어가 들어 있으면 자연 지형으로 본다
 # 위에서부터 먼저 맞는 것을 쓴다. "산림욕장"이 mountain에 걸리지 않도록 forest를 먼저 둔다
-# "섬"은 바다 섬(동백섬)과 강 섬(여의도)이 섞여 있어 쓰지 않는다
+# "섬"은 바다 섬(동백섬)과 강 섬(여의도)이 섞여 있어 지형이 아니라 특징으로 받고, build_context에서 바다와 함께일 때만 남긴다
 KAKAO_NATURE_WORDS: dict[Nature, tuple[str, ...]] = {
     "sea": ("해수욕장", "해변"),
     "forest": ("숲", "휴양림", "수목원", "산림욕장"),
@@ -50,8 +50,13 @@ SEA_PARK_WORDS = ("해상", "해안")
 
 # 특징은 검색어에 들어갈 단어라 가까운 것만 쓴다. 2km 개수 순이면 판교에 "테마파크", 잠실대교 위에 "먹자골목"이 붙었다
 TRAIT_NEAR_M = 500
-# 공방이 관광명소로 등록된 "도자기,도예촌", 자연 분류에서 뺀 "섬"은 분위기 단어로 쓰지 않는다
-KAKAO_TRAIT_NOISE = ("도자기,도예촌", "섬", "섬(내륙)")
+# 공방이 관광명소로 등록된 "도자기,도예촌"은 분위기 단어로 쓰지 않는다
+KAKAO_TRAIT_NOISE = ("도자기,도예촌",)
+# 카카오는 도심 실내 놀이시설(키즈카페·체험관)도 테마파크로 분류하고 크기를 주지 않는다. 상권이 작은 곳에서만 인정하고
+# OSM이 있으면 면적으로 다시 받는다 (예: 홍대 스머프 매직 포레스트·대구 크레이지팡팡은 빠지고, 롯데월드는 OSM으로 남는다)
+KAKAO_VENUE_TRAITS = ("테마파크", "워터테마파크", "동물원")
+VENUE_DENSITIES = ("quiet", "moderate")
+ISLAND_TRAITS = ("섬", "섬(내륙)")
 
 # "공원" 키워드 결과 중 동네마다 있는 작은 공원은 장소의 특징으로 보지 않는다 (예: 신촌 바람산어린이공원)
 KAKAO_SMALL_PARK_WORDS = ("어린이공원", "마을마당", "소공원")
@@ -142,6 +147,8 @@ def summarize_kakao(
         if tag == "mountain" and any(w in doc["place_name"] for w in SEA_PARK_WORDS):
             tag = "sea"
         if tag is None:
+            if kind in KAKAO_VENUE_TRAITS and level not in VENUE_DENSITIES:
+                continue
             if int(doc["distance"]) <= TRAIT_NEAR_M and kind not in KAKAO_TRAIT_NOISE:
                 traits.append(kind)  # attractions가 거리순이라 가까운 순으로 쌓인다
         else:
@@ -211,6 +218,10 @@ MOUNTAIN_MIN_RELIEF_M = 250
 # OSM은 실제 물가까지 재므로, 카카오의 수면 중심점 때문에 넓혔던 강·호수 거리를 바다와 같게 되돌린다
 # 예: 방이맛골 → 석촌호수 278m는 빼고, 롯데월드타워 150m·체스터톤스 → 청초호 136m는 남긴다
 OSM_NATURE_RADIUS_M = {**NATURE_RADIUS_M, "river": NATURE_RADIUS_M["sea"]}
+# 지형이 아니라 특징(place_traits)으로 넘기는 OSM 시설. 이름은 카카오 분류 이름에 맞춘다
+OSM_VENUES = {"theme_park": "테마파크", "water_park": "워터테마파크", "zoo": "동물원"}
+# 공원과 같은 기준. 롯데월드 4.0만㎡는 남고, zoo로 태그된 동물병원(21㎡)·동네 물놀이장(수백 ㎡)은 빠진다
+OSM_VENUE_MIN_AREA_M2 = OSM_MIN_AREA_M2["park"]
 
 # 산 이름. 틀린 이름(서울대에서 "돌산")은 없느니만 못해서 확실할 때만 붙인다
 PROTECTED_SUFFIXES = ("국립공원", "도립공원", "군립공원")
@@ -264,7 +275,7 @@ def _mountain_name(measure: dict) -> str | None:
 def summarize_osm_nature(measure: dict, density: Density) -> list[NatureHit]:
     hits = []
     for kind, items in measure["nearest"].items():
-        if kind == "mountain":
+        if kind == "mountain" or kind in OSM_VENUES:
             continue
         for item in items:
             # 수면(natural=water)으로 그려진 개울은 stream으로 옮긴다 (예: 판교 운중천 쪽 water=stream)
@@ -283,6 +294,10 @@ def summarize_osm_nature(measure: dict, density: Density) -> list[NatureHit]:
         peaks = measure["nearest"].get("mountain", [])
         distance = peaks[0]["distance_m"] if peaks else 0
         nature.append(NatureHit(kind="mountain", distance_m=distance, name=_mountain_name(measure)))
+
+    # OSM 개울(stream)에는 도심 하천(판교 운중천, 정부세종청사 근처)도 들어 있어 산이 함께 잡힐 때만 계곡으로 본다
+    if all(hit.kind != "mountain" for hit in nature):
+        nature = [hit for hit in nature if hit.kind != "stream"]
     return nature
 
 
@@ -292,7 +307,8 @@ def combine_kakao_osm(kakao: PlaceSummary, measure: dict) -> PlaceSummary:
     - 밀도: 카카오 개수 + OSM 공원 안 보정
     - 자연: OSM. 바다만 카카오 해수욕장으로 보충한다(사람이 붙인 분류라 오탐이 거의 없다)
     - 이름: 같은 종류를 카카오도 잡았으면 카카오 이름(한국어 장소명), 아니면 OSM 이름
-    - 특징: 카카오 관광 특징 + OSM 용도지역이 상업·공업이면 업무지구. 용도지역은 비어 있는 곳이 많아 있을 때만 쓴다
+    - 특징: OSM 시설(테마파크 등, 면적 기준) + 카카오 관광 특징 + OSM 용도지역이 상업·공업이면 업무지구.
+      용도지역은 비어 있는 곳이 많아 있을 때만 쓴다
     """
     density = adjust_density_in_park(kakao.density, measure)
     nature = summarize_osm_nature(measure, density)
@@ -307,7 +323,13 @@ def combine_kakao_osm(kakao: PlaceSummary, measure: dict) -> PlaceSummary:
         for hit in nature
     ]
 
-    traits = list(kakao.place_traits)
+    # 면적 기준을 넘는 OSM 시설을 앞에 두고, OSM에 점으로만 있는 시설(울산대공원 등)은 카카오 특징으로 받는다
+    venues = [
+        word for kind, word in OSM_VENUES.items()
+        if any(i["distance_m"] <= TRAIT_NEAR_M and i["area_m2"] >= OSM_VENUE_MIN_AREA_M2
+               for i in measure["nearest"].get(kind, []))
+    ]
+    traits = list(dict.fromkeys(venues + kakao.place_traits))
     if {"commercial", "industrial"} & set(measure["landuse"]):
         traits.insert(0, "업무지구")
 
@@ -362,4 +384,10 @@ def weather_unknown(now: datetime) -> WeatherSummary:
 
 
 def build_context(provider: Provider, places: PlaceSummary, weather: WeatherSummary) -> LocationContext:
-    return LocationContext(provider=provider, **places.model_dump(), **weather.model_dump())
+    """섬은 바다 섬과 강 섬(여의도)이 섞여 있어 바다가 함께 잡힐 때만 남긴다. 바다 판정은 카카오·OSM 어느 쪽이든 끝난 뒤라 여기서 거른다"""
+    traits = places.place_traits
+    if all(hit.kind != "sea" for hit in places.nature):
+        traits = [trait for trait in traits if trait not in ISLAND_TRAITS]
+    return LocationContext(
+        provider=provider, **places.model_dump(exclude={"place_traits"}), place_traits=traits, **weather.model_dump(),
+    )
