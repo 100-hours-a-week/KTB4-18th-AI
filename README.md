@@ -15,6 +15,7 @@ uv sync --locked
 
 환경변수가 필요하면 `.env.example`을 `.env`로 복사하고 개인 API 키를 입력합니다.
 LangSmith 추적은 서버에 `APP_ENV`(dev: `staging`, main: `production`), `LANGSMITH_TRACING=true`, 실제 `LANGSMITH_API_KEY`를 주입해 활성화합니다.
+고정 데이터셋을 이용한 dev 회귀 평가는 [평가 실행 안내](evaluation/README.md)를 따릅니다.
 예시의 모델·외부 API·타임아웃 설정은 로컬 실험용이며 팀의 확정 설정이 아닙니다.
 음성 전사 실행 방법과 API 계약은 [STT API 안내](docs/api/stt.md)를 참고합니다.
 
