@@ -124,3 +124,21 @@ def weather():
 def test_island_needs_sea(nature, expected):
     places = PlaceSummary(region=None, density="moderate", nature=nature, place_traits=["섬"])
     assert build_context("kakao", places, weather()).place_traits == expected
+
+
+def kakao_with_station(attractions, shops, station="범계역 4호선"):
+    summary_input = {code: {"meta": {"total_count": 0}, "documents": []} for code in KAKAO_DENSITY_CODES}
+    summary_input[KAKAO_DENSITY_CODES[0]]["meta"]["total_count"] = shops
+    summary_input["SW8"] = {"meta": {"total_count": 1}, "documents": [{"place_name": station}]}
+    return summarize_kakao("경기도 안양시 동안구 범계동", summary_input, attractions, [])
+
+
+@pytest.mark.parametrize(("attractions", "shops", "expected"), [
+    # 500m 안 관광명소 이름이 먼저
+    ([doc("평촌로데오거리", "여행 > 관광,명소 > 테마거리", 300)], 600, "평촌로데오거리"),
+    # 관광명소가 멀거나, 걸러지는 도심 실내 놀이시설뿐이면 지하철역(노선은 뗀다)
+    ([doc("평촌로데오거리", "여행 > 관광,명소 > 테마거리", 800)], 600, "범계역"),
+    ([doc("스머프 매직 포레스트 홍대점", "여행 > 관광,명소 > 테마파크", 50)], 600, "범계역"),
+])
+def test_landmark_attraction_then_station(attractions, shops, expected):
+    assert kakao_with_station(attractions, shops).landmark == expected

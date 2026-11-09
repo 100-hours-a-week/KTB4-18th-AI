@@ -139,7 +139,7 @@ def summarize_kakao(
     count = sum(density[code]["meta"]["total_count"] for code in KAKAO_DENSITY_CODES)
     level = _level(count, KAKAO_DENSITY_LEVELS, "very_busy")
 
-    hits, traits = [], []
+    hits, traits, landmark = [], [], None
     for doc in attractions:
         kind = doc["category_name"].split(" > ")[-1]
         tag = next((t for t, words in KAKAO_NATURE_WORDS.items() if any(w in kind for w in words)), None)
@@ -151,6 +151,7 @@ def summarize_kakao(
                 continue
             if int(doc["distance"]) <= TRAIT_NEAR_M and kind not in KAKAO_TRAIT_NOISE:
                 traits.append(kind)  # attractions가 거리순이라 가까운 순으로 쌓인다
+                landmark = landmark or _kakao_name(doc)
         else:
             hits.append((tag, int(doc["distance"]), _kakao_name(doc)))
 
@@ -163,11 +164,17 @@ def summarize_kakao(
         if doc["category_name"].startswith("여행 > 공원") and not any(w in name for w in KAKAO_SMALL_PARK_WORDS):
             hits.append(("park", distance, _kakao_name(doc)))
 
+    # 관광명소가 없으면 가장 가까운 지하철역(500m, 거리순). "범계역 4호선"에서 노선은 뗀다
+    stations = density.get("SW8", {}).get("documents", [])
+    if landmark is None and stations:
+        landmark = stations[0]["place_name"].split()[0]
+
     return PlaceSummary(
         region=region,
         density=level,
         nature=_visible_nature(hits, level),
         place_traits=list(dict.fromkeys(traits))[:MAX_TRAITS],
+        landmark=landmark,
     )
 
 
@@ -338,6 +345,7 @@ def combine_kakao_osm(kakao: PlaceSummary, measure: dict) -> PlaceSummary:
         density=density,
         nature=sorted(nature, key=lambda hit: hit.distance_m),
         place_traits=traits[:MAX_TRAITS],
+        landmark=kakao.landmark,
     )
 
 

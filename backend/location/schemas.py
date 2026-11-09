@@ -32,6 +32,8 @@ class PlaceSummary(BaseModel):
     density: Density
     nature: list[NatureHit]  # 종류별 가장 가까운 것만, 가까운 순
     place_traits: list[str] = Field(max_length=5)  # 자연 외 대표 장소 유형. 현재 카카오만 채운다
+    # 지형 이름이 없을 때 문장에 쓸, 사람들이 알아볼 근처 이름(500m 안 관광명소 → 지하철역). 현재 카카오만 채운다
+    landmark: str | None = None
 
 
 class WeatherSummary(BaseModel):
@@ -52,6 +54,7 @@ class LocationContext(BaseModel):
     density: Density
     nature: list[NatureHit]
     place_traits: list[str]
+    landmark: str | None = None
     time_of_day: TimeOfDay
     weather: Weather | None
     temperature_c: float | None
