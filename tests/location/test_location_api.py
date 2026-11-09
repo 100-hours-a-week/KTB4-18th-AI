@@ -30,6 +30,7 @@ def kakao_raw(food_count=300):
         "density": density,
         "attractions": [{"category_name": "여행 > 관광,명소 > 해수욕장,해변", "distance": "53", "place_name": "해운대해수욕장"}],
         "parks": [],
+        "facilities": {},
     }
 
 

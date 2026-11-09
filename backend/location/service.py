@@ -81,7 +81,10 @@ def _places(raw: dict) -> tuple[PlaceSummary, Provider]:
 
     kakao_raw = raw["kakao"]
     if kakao_raw is not None:
-        kakao = summarize_kakao(kakao_raw["region"], kakao_raw["density"], kakao_raw["attractions"], kakao_raw["parks"])
+        kakao = summarize_kakao(
+            kakao_raw["region"], kakao_raw["density"], kakao_raw["attractions"], kakao_raw["parks"],
+            kakao_raw["facilities"],
+        )
         if measure is None:
             return kakao, "kakao"
         return combine_kakao_osm(kakao, measure), "kakao_osm"

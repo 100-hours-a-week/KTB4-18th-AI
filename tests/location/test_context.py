@@ -113,6 +113,11 @@ def test_osm_stream_needs_mountain(relief_m, expected):
     assert [hit.kind for hit in summarize_osm_nature(osm, "moderate")] == expected
 
 
+def landmark_of(places):
+    """최종 이름은 지형이 확정된 뒤 build_context가 고른다"""
+    return build_context("kakao", places, weather()).landmark
+
+
 def weather():
     return summarize_weather({"current": {"time": "2026-11-06T15:00", "weather_code": 0, "temperature_2m": 15.0}})
 
@@ -141,4 +146,79 @@ def kakao_with_station(attractions, shops, station="범계역 4호선"):
     ([doc("스머프 매직 포레스트 홍대점", "여행 > 관광,명소 > 테마파크", 50)], 600, "범계역"),
 ])
 def test_landmark_attraction_then_station(attractions, shops, expected):
-    assert kakao_with_station(attractions, shops).landmark == expected
+    assert landmark_of(kakao_with_station(attractions, shops)) == expected
+
+
+def fdoc(name, category, distance):
+    return {"place_name": name, "category_name": category, "distance": str(distance)}
+
+
+def test_facility_filtered_by_category_and_named_first():
+    """이름만 겹치는 가게는 빼고, 시설은 특징 맨 앞과 이름 첫 순서로 쓴다"""
+    facilities = {
+        "공항": [fdoc("인천국제공항 제1여객터미널", "교통,수송 > 교통시설 > 공항", 0),
+                 fdoc("미미단단 인천공항점", "음식점 > 카페 > 디저트카페", 25)],
+        "학교": [fdoc("인하대학교 영종캠퍼스", "교육,학문 > 학교 > 대학교", 300)],
+    }
+    density = {code: {"meta": {"total_count": 0}, "documents": []} for code in KAKAO_DENSITY_CODES}
+    summary = summarize_kakao("인천광역시 영종구 운서1동", density, [doc("비선루", "여행 > 관광,명소 > 전망대", 400)],
+                              [], facilities)
+    assert summary.place_traits == ["공항"]  # 400m 떨어진 전망대는 위에 있는 게 아니라 특징이 아니다
+    assert landmark_of(summary) == "인천국제공항"
+
+
+@pytest.mark.parametrize(("distance", "trait", "name"), [
+    (80, ["시장"], "방이시장"),  # 100m 안: 시장 안에 있다
+    (254, [], "방이시장"),  # 500m 안: 이름으로만 쓴다
+])
+def test_market_is_trait_only_when_inside(distance, trait, name):
+    facilities = {"시장": [fdoc("방이시장 상점가진흥사업협동조합", "가정,생활 > 시장", distance)]}
+    density = {code: {"meta": {"total_count": 0}, "documents": []} for code in KAKAO_DENSITY_CODES}
+    summary = summarize_kakao("서울특별시 송파구 방이2동", density, [], [], facilities)
+    assert summary.place_traits == trait
+    assert landmark_of(summary) == name
+
+
+@pytest.mark.parametrize(("nature", "names", "expected"), [
+    # 큰 지형(바다) 이름이 관광명소보다 먼저: 광안리가 "광안리해변테마거리"가 되지 않게
+    ([NatureHit(kind="sea", distance_m=0, name="광안리해수욕장")], {"attraction": "광안리해변테마거리"}, "광안리해수욕장"),
+    # 산도 큰 지형이다
+    ([NatureHit(kind="mountain", distance_m=0, name="관악산")], {"대학교": "서울대학교"}, "관악산"),
+    # "~천"은 작은 지형이라 지하철역 다음
+    ([NatureHit(kind="river", distance_m=50, name="불광천")], {"station": "디지털미디어시티역"}, "디지털미디어시티역"),
+    # 대학교는 관광명소 다음
+    ([], {"attraction": "죽녹원", "대학교": "국립목포대학교"}, "죽녹원"),
+    # 시장은 작은 지형보다도 뒤
+    ([NatureHit(kind="park", distance_m=0, name="방이동백제고분군")], {"시장": "방이시장"}, "방이동백제고분군"),
+    # 대표 시설은 맨 앞
+    ([NatureHit(kind="sea", distance_m=100, name="을왕리해수욕장")], {"major": "인천국제공항"}, "인천국제공항"),
+])
+def test_landmark_order(nature, names, expected):
+    places = PlaceSummary(region=None, density="moderate", nature=nature, place_traits=[], names=names)
+    assert landmark_of(places) == expected
+
+
+@pytest.mark.parametrize(("distance", "traits"), [
+    (14, ["전망대"]),  # 서울스카이 위
+    (158, []),  # 근처에 전망대가 있을 뿐(인천공항 비선루)
+])
+def test_observatory_is_trait_only_when_on_it(distance, traits):
+    density = {code: {"meta": {"total_count": 0}, "documents": []} for code in KAKAO_DENSITY_CODES}
+    summary = summarize_kakao("서울특별시 송파구 잠실6동", density, [doc("서울스카이", "여행 > 관광,명소 > 전망대", distance)], [])
+    assert summary.place_traits == traits
+    assert summary.names["attraction"] == "서울스카이"  # 이름 후보로는 500m까지 쓴다
+
+
+@pytest.mark.parametrize(("campus", "expected"), [
+    # 큰 캠퍼스 안: 대학 이름이 큰 지형(관악산)보다 먼저
+    (item(0, 1_345_931, "서울대학교 관악캠퍼스"), "서울대학교"),
+    # 작은 캠퍼스는 OSM으로 받지 않아 산 이름 그대로
+    (item(0, 30_448, "연세대학교 원주의과대학"), "관악산"),
+    # 큰 캠퍼스라도 멀면(100m 넘음) 받지 않는다
+    (item(300, 739_123, "연세대학교 신촌캠퍼스"), "관악산"),
+])
+def test_osm_campus_named_before_big_nature(campus, expected):
+    kakao_summary = PlaceSummary(region=None, density="moderate", nature=[], place_traits=[])
+    osm = measure({"university": [campus]}, relief_m=300)
+    osm["peaks"] = [{"distance_m": 0, "name": "관악산", "ele": 600.0}]
+    assert landmark_of(combine_kakao_osm(kakao_summary, osm)) == expected
