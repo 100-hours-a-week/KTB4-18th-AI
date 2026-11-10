@@ -34,6 +34,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none", "new", 0.05),
         "아이유 노래 중 잘 모르는 곡만": ("lookup", "IU", 0.99, 0.05, "K-Pop", "none", "none", "new", 0.93),
         "빠른 노래, 한 120 BPM 정도면": ("recommend", "none", 0.9, 0.0, "none", "none", "none", "new", 0.88),
+        "일반 모드로 돌아가줘": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none", "new", 0.05),
     }
 
     def classify(_client, messages):
@@ -42,6 +43,8 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
             return {"intent": "lookup", "lookup_song": None, "lookup_artist": None}
         if messages[-1] == "빠른 노래, 한 120 BPM 정도면":
             return {"intent": "recommend", "recommend_unsupported_condition": True, "recommend_has_enough_info": True}
+        if messages[-1] == "사용법 알려줘":
+            return {"intent": "guide"}
         return {"intent": "fast_mode", "recommend_genres": ["Pop"]}
 
     def decide(state, _questions):
@@ -57,7 +60,8 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
                 # "90년대 잔잔한 힙합"만 2곡을 요청한 것으로 둔다.
                 "requested_count": {"choice": "2" if message == "90년대 잔잔한 힙합" else "none", "confidence": 0.9},
                 "by_lyrics": {"noul": 0.05}, "by_ranking": {"noul": ranking},
-                "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05}}
+                "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05},
+                "exit_fast": {"noul": 0.97 if message == "일반 모드로 돌아가줘" else 0.05}}
 
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
@@ -107,10 +111,15 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     # 애매하면(0.7~0.9) 그 턴만 classify가 지원 여부를 다시 판단한다.
     rechecked = send("빠른 노래, 한 120 BPM 정도면")
     assert rechecked["recommend_unsupported_condition"] is True
+    # 끄기 요청이면 fast_mode를 끄고, 다음 턴부터는 Jev가 아니라 classify가 받는다.
+    turned_off = send("일반 모드로 돌아가줘")
+    assert turned_off["intent"] == "fast_mode_off"
+    assert turned_off["fast_mode"] is False
+    assert send("사용법 알려줘")["intent"] == "guide"
 
-    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "빠른 노래, 한 120 BPM 정도면"]
+    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "빠른 노래, 한 120 BPM 정도면", "사용법 알려줘"]
     assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘",
-                         "아이유 노래 중 잘 모르는 곡만", "빠른 노래, 한 120 BPM 정도면"]
+                         "아이유 노래 중 잘 모르는 곡만", "빠른 노래, 한 120 BPM 정도면", "일반 모드로 돌아가줘"]
     # 임베딩은 Jev 답을 기다리지 않고 후보마다 미리 출발한다("좀 더 신나게" 턴은 new/continue/repeat 후보 3개).
     assert {"좀 더 신나게", "90년대 잔잔한 힙합 좀 더 신나게", "90년대 잔잔한 힙합"} <= set(embedded)
     # 검색에는 Jev 답에 맞는 후보의 벡터가 쓰인다. 장르·연도는 고속 모드 전 classify가 남긴

@@ -270,6 +270,17 @@ UNSUPPORTED_REFUSE = 0.9
 UNSUPPORTED_QUESTIONS = ("by_lyrics", "by_ranking", "by_number", "by_topic")
 
 
+# NOTE: 끄기 요청은 최저 0.89, 헷갈리는 문장은 최고 0.65("모드 바꾸고 싶어")였다. 사이에서 끊는다.
+# 오탐이면 일반 모드로 돌아갈 뿐이고(다시 "고속 모드 켜줘" 하면 된다), 놓치면 고속 모드가 유지될 뿐이다.
+EXIT_CONFIDENT = 0.8
+
+
+def wants_exit_fast(answers: dict) -> bool:
+    """고속 모드를 끄고 일반 모드로 돌아가 달라는 요청인가."""
+
+    return answers["exit_fast"]["noul"] >= EXIT_CONFIDENT
+
+
 def unsupported_score(answers: dict) -> float:
     """가사·순위·정확한 수치·주제처럼 우리가 가진 정보로 고를 수 없는 기준을 요구한다는 확신(넷 중 최고)."""
 

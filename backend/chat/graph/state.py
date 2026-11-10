@@ -22,8 +22,8 @@ class RecommendationState(TypedDict, total=False):
     # ── 대화 세션 동안 누적되는 기록. checkpointer가 thread_id별로 이어붙여준다 ──
     messages: Annotated[list[str], operator.add]
 
-    # ── 고속 모드. classify_node가 켜고, checkpointer가 thread_id별로 기억한다 ──
-    # NOTE: 끄는 경로는 없다. 채팅방을 나가면 thread_id가 바뀌어 일반 모드로 돌아온다.
+    # ── 고속 모드. classify_node가 켜고 jev_node가 끄며, checkpointer가 thread_id별로 기억한다 ──
+    # NOTE: 채팅방을 새로 열어도 thread_id가 바뀌어 일반 모드로 시작한다.
     fast_mode: bool
     # jev_node가 Jev 호출에 실패하면 True. route_by_jev가 보고 그 턴만 classify로 보낸다.
     jev_failed: bool
