@@ -32,6 +32,9 @@ class PlaceSummary(BaseModel):
     density: Density
     nature: list[NatureHit]  # 종류별 가장 가까운 것만, 가까운 순
     place_traits: list[str] = Field(max_length=5)  # 자연 외 대표 장소 유형. 현재 카카오만 채운다
+    # 문장에 쓸 이름 후보, 묶음별로 가장 가까운 하나(major·attraction·시장·대학교·station). 현재 카카오만 채운다.
+    # 최종 이름은 지형(nature)이 확정된 뒤 build_context가 지형 이름과 섞어 고른다
+    names: dict[str, str] = Field(default_factory=dict)
 
 
 class WeatherSummary(BaseModel):
@@ -52,6 +55,7 @@ class LocationContext(BaseModel):
     density: Density
     nature: list[NatureHit]
     place_traits: list[str]
+    landmark: str | None = None  # 문장에 쓸 이름 하나. 없으면 region의 동 이름을 쓴다
     time_of_day: TimeOfDay
     weather: Weather | None
     temperature_c: float | None

@@ -30,6 +30,7 @@ def kakao_raw(food_count=300):
         "density": density,
         "attractions": [{"category_name": "여행 > 관광,명소 > 해수욕장,해변", "distance": "53", "place_name": "해운대해수욕장"}],
         "parks": [],
+        "facilities": {},
     }
 
 
@@ -71,8 +72,8 @@ def calls(monkeypatch):
         state["contexts"].append(ctx)
         return LocationQuery(place="해수욕장", message=MESSAGE)
 
-    def search(place, weather, temperature_c, time_of_day, month):
-        state["searched"].append((place, weather, time_of_day))
+    def search(place, supports, weather, temperature_c, time_of_day, month):
+        state["searched"].append((place, supports, weather, time_of_day))
         return [track()]
 
     monkeypatch.setattr(service, "_location_query", location_query)
@@ -101,8 +102,8 @@ def test_success_returns_message_and_tracks(calls):
 
     assert response.status_code == 200
     assert response.json() == {"message": MESSAGE, "tracks": [track().model_dump()]}
-    # 검색에는 LLM이 고른 장소 단어와 측정한 날씨·시간대가 따로 들어간다
-    assert calls["searched"] == [("해수욕장", "clear", "afternoon")]
+    # 검색에는 LLM이 고른 장소 단어와 측정한 날씨·시간대가 따로 들어간다. 바다뿐이라 보조 단어는 없다
+    assert calls["searched"] == [("해수욕장", [], "clear", "afternoon")]
     ctx = calls["contexts"][0]
     assert ctx.provider == "kakao"
     assert [hit.kind for hit in ctx.nature] == ["sea"]
