@@ -64,6 +64,8 @@ place
   - 위에 없는 종류는 뜻이 가장 가까운 보기를 고르세요.
 - 맞는 보기가 없으면 daytime_commercial_scale로 고르세요.
   busy·very_busy → 번화가, moderate → 주택가, quiet → region이 읍·면이면 시골 마을, 아니면 주택가
+- landmark와 region은 문장에 쓸 이름일 뿐이라 place를 고르는 근거가 아닙니다. 이름에 "역"이 들어 있어도
+  place_traits에 기차역이 없으면 지하철역이니 기차역을 고르지 마세요.
 """
 _OUTPUT_RULES = """
 message
