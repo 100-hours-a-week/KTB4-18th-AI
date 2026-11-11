@@ -81,6 +81,42 @@ message
 """
 INSTRUCTIONS = _INPUT_RULES + _PLACE_RULES + _OUTPUT_RULES
 
+# 보조 단어: LLM이 고른 place 말고도 이곳에 있는 지형·특징을 같은 보기 단어로 바꿔 검색에 섞는다(blend.place_vector).
+# NOTE: 연결은 _PLACE_RULES와 같아야 한다. 한쪽을 바꾸면 다른 쪽도 고칠 것
+SUPPORT_NEAR_M = 300  # _INPUT_RULES의 "300m보다 먼 지형은 약하게"와 같은 선. 산은 기복으로 판정해 거리를 보지 않는다
+MAX_SUPPORT_WORDS = 2
+NATURE_PLACE_WORDS: dict[str, PlaceWord] = {
+    "sea": "해수욕장", "mountain": "산", "stream": "계곡", "forest": "숲 산책로", "park": "공원",
+}
+# 테마거리·도보여행·온천·업무지구처럼 맞는 보기가 없는 특징은 섞지 않는다
+TRAIT_PLACE_WORDS: dict[str, PlaceWord] = {
+    "섬": "작은 섬", "섬(내륙)": "작은 섬", "고궁,궁": "돌담길", "수목원,식물원": "정원", "자연휴양림": "숲 산책로",
+    "워터테마파크": "워터파크", "테마파크": "테마파크", "동물원": "동물원", "프로야구장": "야구장", "종합운동장": "야구장",
+    "전망대": "하늘", "공항": "공항", "기차역": "기차역", "스키장": "스키장", "시장": "시장",
+    "먹자골목": "먹자골목", "카페거리": "카페거리",
+}
+
+
+def _river_word(name: str | None) -> PlaceWord:
+    if name == "한강":
+        return "한강"
+    # 의암호·청초호처럼 "호"로 끝나는 이름도 호수다
+    if name and ("호수" in name or "저수지" in name or name.endswith("호")):
+        return "호수"
+    return "강"
+
+
+def support_words(ctx: LocationContext, place: str) -> list[str]:
+    """가까운 지형 → place_traits 순으로 보기 단어로 바꿔, place와 겹치지 않는 것을 MAX_SUPPORT_WORDS개까지"""
+    words = []
+    for hit in ctx.nature:
+        if hit.kind != "mountain" and hit.distance_m > SUPPORT_NEAR_M:
+            continue
+        words.append(_river_word(hit.name) if hit.kind == "river" else NATURE_PLACE_WORDS[hit.kind])
+    words += [TRAIT_PLACE_WORDS[trait] for trait in ctx.place_traits if trait in TRAIT_PLACE_WORDS]
+    supports = [word for word in dict.fromkeys(words) if word != place]
+    return supports[:MAX_SUPPORT_WORDS]
+
 
 def _llm_input(ctx: LocationContext) -> str:
     """좌표는 애초에 없다. 산은 기복으로 판정해 거리에 의미가 없으므로 이름만 넘긴다"""

@@ -1,11 +1,14 @@
 """장소·날씨·시간 점수를 섞어 곡을 고르는 규칙을 검증한다."""
 
+import random
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from backend.location.blend import choose_tracks, ingredient_phrase, ladder_weights, mix, slot_phrases
+from backend.location.blend import (
+    choose_tracks, ingredient_phrase, ladder_weights, mix, place_vector, slot_phrases,
+)
 
 
 @pytest.mark.parametrize(("weather", "temperature", "month", "expected"), [
@@ -66,7 +69,7 @@ def test_choose_tracks_fills_ladder_then_slots():
     tracks = {i: track(i) for i in range(1, 7)}
     pools = {"place": [tracks[1], tracks[2], tracks[6]], "ingredient": [tracks[3], tracks[4]],
              "slots": [[tracks[5], tracks[6]]]}
-    chosen = choose_tracks("gemini", place, ingredient, [night], pools, vectors, k=5)
+    chosen = choose_tracks("gemini", place, ingredient, [night], pools, vectors, k=5, top_n=1)
     assert [t.track_id for t in chosen[:4]] == ["1", "2", "6", "3"]  # 장소 몫 1.0 → 0.6
     assert chosen[4].track_id == "5"  # 6은 이미 골랐다
 
@@ -75,5 +78,28 @@ def test_same_song_is_not_chosen_twice():
     a = np.array([1.0, 0.0])
     vectors = {"1": a, "2": a, "3": 0.5 * a}
     pools = {"place": [track(1, "Rain"), track(2, "rain"), track(3)], "ingredient": [], "slots": []}
-    chosen = choose_tracks("gemini", a, a, [], pools, vectors, k=2)
+    chosen = choose_tracks("gemini", a, a, [], pools, vectors, k=2, top_n=1)
     assert [t.track_id for t in chosen] == ["1", "3"]
+
+
+def test_pick_stays_within_top_n():
+    """칸마다 점수 상위 3곡 안에서만 뽑고, 실행마다 그 안에서 바뀐다"""
+    a = np.array([1.0, 0.0])
+    vectors = {str(i): (1 - i / 10) * a for i in range(1, 7)}  # 1이 가장 높고 6이 가장 낮다
+    pools = {"place": [track(i) for i in range(1, 7)], "ingredient": [], "slots": []}
+    firsts = {choose_tracks("gemini", a, a, [], pools, vectors, k=1, rng=random.Random(seed))[0].track_id
+              for seed in range(30)}
+    assert firsts == {"1", "2", "3"}
+
+
+@pytest.mark.parametrize("space", ["gemini", "v4"])
+def test_place_vector_weights_main_word(space):
+    """주 단어 0.6, 보조 단어 둘이 0.2씩. v4는 마지막 1(허브 보정 자리)을 그대로 둔다"""
+    main, b, c = np.array([1.0, 0.0, 0.0, 1.0]), np.array([0.0, 1.0, 0.0, 1.0]), np.array([0.0, 0.0, 1.0, 1.0])
+    song = np.array([0.3, 0.8, -0.2, 0.5])
+    vector = place_vector(space, main, [b, c])
+    expected = 0.6 * (main @ song) + 0.2 * (b @ song) + 0.2 * (c @ song)
+    assert vector @ song == pytest.approx(expected)
+    if space == "v4":
+        assert vector[-1] == 1.0
+    assert place_vector(space, main, []) is main

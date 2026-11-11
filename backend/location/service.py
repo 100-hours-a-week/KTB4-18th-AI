@@ -30,14 +30,14 @@ from backend.location import elevation, osm, sources
 from backend.location.context import (
     build_context, combine_kakao_osm, summarize_kakao, summarize_osm_nature, summarize_weather, weather_unknown,
 )
-from backend.location.query import LocationQuery, llm_query
+from backend.location.query import LocationQuery, llm_query, support_words
 from backend.location.schemas import (
     LocationContext, LocationRecommendationRequest, LocationRecommendationResponse, PlaceSummary, Provider,
 )
 from backend.providers.openrouter import OPENROUTER_BASE_URL, get_embedding_client
 from backend.recommendation.embedding import embed_query
 from backend.location.blend import (
-    POOL_SIZE, choose_tracks, ingredient_phrase, place_phrase, query_vector, slot_phrases,
+    POOL_SIZE, choose_tracks, ingredient_phrase, place_phrase, place_vector, query_vector, slot_phrases,
 )
 from backend.recommendation.adapter import search_space
 from backend.recommendation.retrieval import candidate_pools_db
@@ -118,17 +118,22 @@ def _fixed_embedding(text: str) -> tuple[float, ...]:
     return tuple(embed_query(get_embedding_client(), text))
 
 
-def _blend_search(place: str, weather: str | None, temperature_c: float | None, time_of_day: str, month: int) -> list:
-    """장소·날씨말·특별 칸 문장을 따로 임베딩해 칸별로 곡을 고른다"""
+def _blend_search(
+    place: str, supports: list[str], weather: str | None, temperature_c: float | None, time_of_day: str, month: int,
+) -> list:
+    """장소 단어(주·보조)·날씨말·특별 칸 문장을 따로 임베딩해 칸별로 곡을 고른다"""
     space = search_space()
-    place_q = query_vector(space, _fixed_embedding(place_phrase(place)))
+    word_qs = [query_vector(space, _fixed_embedding(place_phrase(word))) for word in [place, *supports]]
     ingredient_q = query_vector(space, _fixed_embedding(ingredient_phrase(weather, temperature_c, month)))
     slot_qs = [query_vector(space, _fixed_embedding(p)) for p in slot_phrases(weather, time_of_day, month)]
 
-    pools, vectors = candidate_pools_db([place_q, ingredient_q, *slot_qs], space, POOL_SIZE)
+    pools, vectors = candidate_pools_db([*word_qs, ingredient_q, *slot_qs], space, POOL_SIZE)
+    word_pools, ingredient_pool, slot_pools = pools[:len(word_qs)], pools[len(word_qs)], pools[len(word_qs) + 1:]
+    # 장소 후보는 단어마다 찾은 곡을 합친 것. 섞은 장소 벡터는 이 안에서 순서를 정하는 데만 쓴다(blend.place_vector)
+    place_pool = list({track.track_id: track for pool in word_pools for track in pool}.values())
     return choose_tracks(
-        space, place_q, ingredient_q, slot_qs,
-        {"place": pools[0], "ingredient": pools[1], "slots": pools[2:]}, vectors,
+        space, place_vector(space, word_qs[0], word_qs[1:]), ingredient_q, slot_qs,
+        {"place": place_pool, "ingredient": ingredient_pool, "slots": slot_pools}, vectors,
     )
 
 
@@ -148,8 +153,8 @@ async def _recommend(lat: float, lng: float) -> tuple[LocationQuery, list, Provi
     query = await asyncio.to_thread(_location_query, ctx)
     timings["query_ms"] = round((time.monotonic() - started) * 1000)
     tracks = await asyncio.to_thread(
-        _blend_search, query.place, ctx.weather, ctx.temperature_c, ctx.time_of_day,
-        datetime.now(KST).month,
+        _blend_search, query.place, support_words(ctx, query.place), ctx.weather, ctx.temperature_c,
+        ctx.time_of_day, datetime.now(KST).month,
     )
     return query, tracks, provider, timings
 
