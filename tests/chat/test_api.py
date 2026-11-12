@@ -335,6 +335,71 @@ def test_recommend_insufficient_info_sends_tracks_with_followup(client, monkeypa
     assert (state["episode"], state["question_count"]) == (1, 1)
 
 
+def test_followup_stops_after_two_questions_in_same_episode(client, monkeypatch):
+    test_client, fake_openai = client
+    more = dict(VAGUE, episode_relation="continue")
+    seen = classify_turns(monkeypatch, recommend_classification(**VAGUE),
+                          recommend_classification(**more), recommend_classification(**more))
+    for message in ("비 오네", "몰라", "그냥 틀어줘"):
+        test_client.post("/v1/chat/messages", json=request_body(message))
+
+    assert "추가 질문: 없음" in fake_openai.responses.calls[-1]["input"]
+    assert dialogue_state()["question_count"] == 2
+    # 분류 LLM은 지난 질문 상태를 자료로 받아 짧은 답을 같은 요청의 답으로 볼 수 있다.
+    assert any('"question_count": 2' in line for line in seen[-1])
+
+
+def test_new_request_starts_new_episode(client, monkeypatch):
+    test_client, fake_openai = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE), recommend_classification(**VAGUE))
+    test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+    test_client.post("/v1/chat/messages", json=request_body("오늘 피곤하다"))
+
+    state = dialogue_state()
+    assert (state["episode"], state["question_count"]) == (2, 1)
+
+
+def test_aside_turn_keeps_episode_and_clears_followup(client, monkeypatch):
+    test_client, _ = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE), classification("out_of_scope"))
+    test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+    test_client.post("/v1/chat/messages", json=request_body("주식 추천해줘"))
+
+    state = dialogue_state()
+    assert (state["episode"], state["question_count"], state["followup_info"]) == (1, 1, [])
+
+
+def test_no_tracks_means_no_question_counted(client, monkeypatch):
+    test_client, fake_openai = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE))
+    monkeypatch.setattr(
+        nodes, "vector_recommendation",
+        lambda query_vector, exclude_ids=None, genres=None, min_year=None, max_year=None, k=5: [],
+    )
+    test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+
+    assert fake_openai.responses.calls == []
+    assert dialogue_state()["question_count"] == 0
+    # 묻지 않았으므로 다음 분류에 "직전에 물은 정보"로 넘기지 않는다.
+    assert dialogue_state()["asked_info"] == []
+
+
+def test_aside_turn_keeps_last_asked_info(client, monkeypatch):
+    test_client, _ = client
+    seen = classify_turns(monkeypatch, recommend_classification(**VAGUE), classification("out_of_scope"),
+                          classification("guide"))
+    for message in ("비 오네", "주식 추천해줘", "사용법 알려줘"):
+        test_client.post("/v1/chat/messages", json=request_body(message))
+
+    assert dialogue_state()["asked_info"] == ["place", "activity"]
+    assert any('"asked_info": ["place", "activity"]' in line for line in seen[-1])
+
+
+def test_fast_mode_fallback_skips_dialogue():
+    state = {"intent": "recommend", "recommend_unsupported_condition": False, "fast_mode": True}
+    assert workflow.route_by_intent(state) == "embed"
+
+
 def test_enough_info_does_not_ask(client, monkeypatch):
     test_client, fake_openai = client
     classify_turns(monkeypatch, recommend_classification(missing_info=[], episode_relation="new"))
@@ -691,10 +756,29 @@ def test_followup_falls_back_when_answer_has_no_question(client, monkeypatch):
     assert dialogue_state()["question_count"] == 1
 
 
+def test_dialogue_records_known_info(client, monkeypatch):
+    test_client, _ = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE))
+    test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+    assert dialogue_state()["known_info"] == ["mood"]
+
+
 def test_past_tense_is_not_a_question():
     from backend.chat.answer import followup_fallback
     assert followup_fallback("알려주신 비 오는 상황에 맞춰 먼저 추천했어요.", ["place"]) != ""
     assert followup_fallback("어디에 계신지 알려주시면 더 맞춰 드릴게요.", ["place"]) == ""
+
+
+def test_unsupported_recommend_starts_new_episode(client, monkeypatch):
+    test_client, fake_openai = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE),
+                   recommend_classification(recommend_unsupported_condition=True, missing_info=["place"]))
+    test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+    response = test_client.post("/v1/chat/messages", json=request_body("가사에 사랑이 나오는 노래"))
+
+    assert recommendation.CLARIFY_TEXT["recommend_unsupported_condition"] in response.text
+    state = dialogue_state()
+    assert (state["episode"], state["question_count"], state["asked_info"], state["followup_info"]) == (2, 0, [], [])
 
 
 def test_question_is_not_recorded_when_cards_are_not_sent(client, monkeypatch):
@@ -713,6 +797,18 @@ def test_question_is_not_recorded_when_cards_are_not_sent(client, monkeypatch):
             break
     state = dialogue_state()
     assert state["question_count"] == 0 and not state.get("shown_track_ids")
+
+
+def test_invalid_count_recommend_starts_new_episode(client, monkeypatch):
+    test_client, _ = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE),
+                   recommend_classification(requested_count=0, missing_info=[]))
+    test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+    response = test_client.post("/v1/chat/messages", json=request_body("운동 노래 0곡"))
+
+    assert recommendation.CLARIFY_TEXT["invalid_count"] in response.text
+    state = dialogue_state()
+    assert (state["episode"], state["question_count"], state["asked_info"]) == (2, 0, [])
 
 
 def test_rhetorical_question_mark_is_not_a_followup():
