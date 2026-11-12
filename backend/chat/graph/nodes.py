@@ -31,6 +31,14 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     result = classify(config["configurable"]["client"], messages)
     if result["intent"] == "fast_mode":
         result["fast_mode"] = True
+    # NOTE: 고속 모드의 이어받기·재요청은 "마지막으로 검색한 추천 턴의 검색 문장"(search_parts)에서 이어간다.
+    # classify는 조회·모드 전환·사용법 턴에도 recommend_query를 채우므로(원문 그대로), 실제로 검색하는
+    # 추천 턴(미지원·정보 부족이 아님)일 때만 남긴다. 안 그러면 "고속 모드 켜줘" 다음의 "다른 곡으로 더 줘"가
+    # "고속 모드 켜줘"로 검색된다.
+    searches = (result["intent"] == "recommend" and result.get("recommend_has_enough_info")
+                and not result.get("recommend_unsupported_condition"))
+    if searches:
+        result["search_parts"] = [result["recommend_query"]]
     return result
 
 
@@ -140,12 +148,9 @@ def jev_node(state: RecommendationState) -> dict:
     messages = state["messages"]
     shown_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
 
-    # NOTE: 지난 턴을 classify가 처리했으면(고속 모드 전, Jev 폴백) search_parts가 없거나 낡았다.
-    # 그럴 땐 classify가 쓴 검색 문장(이 시점엔 아직 덮어쓰기 전인 recommend_query)을 출발점으로 삼는다.
+    # NOTE: search_parts는 마지막 추천 턴의 검색 문장이다. 고속 모드면 jev_node가, 일반 모드(고속 모드 전,
+    # Jev 폴백 포함)면 classify_node가 추천 턴에서만 남긴다.
     previous_parts = state.get("search_parts") or []
-    previous_query = state.get("recommend_query")
-    if previous_query and " ".join(previous_parts) != previous_query:
-        previous_parts = [previous_query]
     candidates = candidate_parts(previous_parts, state["message"])
 
     # NOTE: 후보 검색 문장 임베딩을 먼저 출발시켜 두고 Jev를 부른다. 둘이 동시에 진행돼서

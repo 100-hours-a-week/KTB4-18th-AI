@@ -29,7 +29,8 @@ class RecommendationState(TypedDict, total=False):
     jev_failed: bool
     # Jev가 미지원 조건(가사·순위·정확한 수치·주제 기준)을 감지하면 True. 그 턴만 classify로 보낸다.
     jev_unsupported: bool
-    # 고속 모드 검색 문장(recommend_query)을 이루는 메시지들. 추천 턴에서만 jev_node가 갱신한다.
+    # 마지막 추천 턴의 검색 문장을 이루는 메시지들. 고속 모드 이어받기·재요청의 출발점이다.
+    # 추천 턴에서만 jev_node(고속 모드)나 classify_node(일반 모드)가 갱신한다.
     search_parts: list[str]
 
     # ── classify_node(고속 모드에선 jev_node)가 채움 ──
