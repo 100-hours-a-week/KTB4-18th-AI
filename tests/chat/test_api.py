@@ -309,24 +309,39 @@ def test_recommend_unsupported_condition_returns_unsupported_text(client, monkey
     assert fake_openai.responses.calls == []
 
 
-def test_recommend_insufficient_info_returns_clarify_text(client, monkeypatch):
-    """검색 단서가 없으면 검색 없이 바로 확인 질문으로 끝난다."""
+def dialogue_state() -> dict:
+    return workflow.build_graph().get_state({"configurable": {"thread_id": THREAD_ID}}).values
+
+
+def classify_turns(monkeypatch, *results: dict) -> list[list[str]]:
+    """턴마다 다른 분류 결과를 돌려주고, 분류에 넘어간 메시지 목록을 기록한다."""
+    seen, queue = [], list(results)
+    monkeypatch.setattr(nodes, "classify", lambda client, messages: seen.append(list(messages)) or queue.pop(0))
+    return seen
+
+
+VAGUE = dict(recommend_has_enough_info=False, missing_info=["place", "activity"], episode_relation="new")
+
+
+def test_recommend_insufficient_info_sends_tracks_with_followup(client, monkeypatch):
+    """정보가 부족해도 곡을 주고, 같은 답변에 물을 정보를 지시하며, 전송 뒤 질문 1회로 센다."""
     test_client, fake_openai = client
-    monkeypatch.setattr(
-        nodes, "classify",
-        lambda client, messages: recommend_classification(recommend_has_enough_info=False),
-    )
+    classify_turns(monkeypatch, recommend_classification(**VAGUE))
+    response = test_client.post("/v1/chat/messages", json=request_body("비 오네"))
 
-    def unexpected(*args, **kwargs):
-        pytest.fail("정보 부족인데 임베딩 또는 DB 검색 실행")
+    assert "event: tracks" in response.text and '"track_id": "123"' in response.text
+    assert "추가 질문: 장소, 지금 하는 일" in fake_openai.responses.calls[-1]["input"]
+    state = dialogue_state()
+    assert (state["episode"], state["question_count"]) == (1, 1)
 
-    monkeypatch.setattr(nodes, "get_embedding_client", unexpected)
-    monkeypatch.setattr(nodes, "vector_recommendation", unexpected)
-    response = test_client.post("/v1/chat/messages", json=request_body("추천해줘"))
 
-    assert response.status_code == 200
-    assert recommendation.CLARIFY_TEXT["recommend_insufficient_info"] in response.text
-    assert fake_openai.responses.calls == []
+def test_enough_info_does_not_ask(client, monkeypatch):
+    test_client, fake_openai = client
+    classify_turns(monkeypatch, recommend_classification(missing_info=[], episode_relation="new"))
+    test_client.post("/v1/chat/messages", json=request_body("퇴근길 잔잔한 노래"))
+
+    assert "추가 질문: 없음" in fake_openai.responses.calls[-1]["input"]
+    assert dialogue_state()["question_count"] == 0
 
 
 def test_recommend_forwards_genres_and_year_range_to_search(client, monkeypatch):
@@ -665,10 +680,39 @@ def test_ambiguous_reference_with_recent_cards_asks_for_card_order(client, monke
     assert fake_openai.responses.calls == []
 
 
+def test_followup_falls_back_when_answer_has_no_question(client, monkeypatch):
+    """답변 LLM이 질문을 빠뜨려도 코드가 열린 질문을 덧붙이고, 그때만 질문 1회로 센다."""
+    test_client, _ = client
+    classify_turns(monkeypatch, recommend_classification(**VAGUE))
+    response = test_client.post("/v1/chat/messages", json=request_body("비 오네"))
+
+    assert "장소, 지금 하는 일을 알려주시면" in response.text
+    assert response.text.index("알려주시면") < response.text.index("event: tracks")
+    assert dialogue_state()["question_count"] == 1
+
+
 def test_past_tense_is_not_a_question():
     from backend.chat.answer import followup_fallback
     assert followup_fallback("알려주신 비 오는 상황에 맞춰 먼저 추천했어요.", ["place"]) != ""
     assert followup_fallback("어디에 계신지 알려주시면 더 맞춰 드릴게요.", ["place"]) == ""
+
+
+def test_question_is_not_recorded_when_cards_are_not_sent(client, monkeypatch):
+    """카드 청크를 보내지 못하고 연결이 끊기면 질문 횟수와 노출 이력을 확정하지 않는다."""
+    from backend.chat.answer import AnswerHints
+    from backend.chat.streaming import stream_answer
+
+    _, fake_openai = client
+    workflow.build_graph().update_state({"configurable": {"thread_id": THREAD_ID}},
+                                        {"episode": 1, "question_count": 0}, as_node="search")
+    stream = stream_answer(fake_openai, "비 오는 날", [make_track()], None,
+                           AnswerHints(followup_info=["place"]), thread_id=THREAD_ID)
+    for chunk in stream:
+        if chunk.startswith("event: tracks"):
+            stream.close()  # 카드 청크 전송 중 연결이 끊긴 상황
+            break
+    state = dialogue_state()
+    assert state["question_count"] == 0 and not state.get("shown_track_ids")
 
 
 def test_rhetorical_question_mark_is_not_a_followup():
