@@ -34,9 +34,6 @@ CLARIFY_TEXT = {
     "lookup_ambiguous": (
         "어떤 곡이나 아티스트를 찾으시는지 조금 더 구체적으로 알려주세요. 예: '아이유 밤편지'"
     ),
-    "recommend_insufficient_info": (
-        "어떤 분위기나 상황에 어울리는 음악을 찾으시나요? 예: '퇴근길에 듣기 좋은 잔잔한 노래'"
-    ),
     "recommend_unsupported_condition": (
         "가사 내용이나 노래의 주제, 차트 순위, 정확한 BPM 같은 조건으로는 아직 곡을 "
         "찾을 수 없어요. 대신 '비 오는 날 듣기 좋은 잔잔한 노래'처럼 분위기·상황·장르·"
@@ -98,8 +95,6 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     if intent == "recommend":
         if result["recommend_unsupported_condition"]:
             return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_unsupported_condition"])
-        if not result["recommend_has_enough_info"]:
-            return ChatOutcome(kind="static", text=CLARIFY_TEXT["recommend_insufficient_info"])
         if fast_mode:
             return ChatOutcome(kind="fast", tracks=result["tracks"], text=FAST_RECOMMEND_TEXT,
                                hints=AnswerHints.from_classification(result))

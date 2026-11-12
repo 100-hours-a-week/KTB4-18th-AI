@@ -81,3 +81,22 @@ def test_genre_catalog_uses_active_search_space(monkeypatch, space):
     monkeypatch.setattr(search, "known_genres", catalog)
     assert intent.known_genres() == ["Jazz"]
     assert calls == [space]
+
+
+def test_classify_keeps_only_known_dialogue_values(monkeypatch):
+    """대화형 추천 필드는 정해진 값만 남겨 질문 대상·에피소드 판정이 엉뚱한 값으로 새지 않게 한다."""
+    monkeypatch.setenv("LLM_MODEL", "openai/test-model")
+    monkeypatch.setattr(intent, "known_genres", lambda: [])
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(output_text=classification_json(
+            missing_info=["place", "weather", "place", "mood"], episode_relation="maybe"))
+
+    result = intent.classify(SimpleNamespace(responses=SimpleNamespace(create=create)), ["비 오네"])
+
+    assert result["missing_info"] == ["place", "mood"]
+    assert result["episode_relation"] == "new"
+    schema = captured["text"]["format"]["schema"]
+    assert {"missing_info", "episode_relation"} <= set(schema["required"])

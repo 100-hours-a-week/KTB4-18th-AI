@@ -8,10 +8,10 @@ from openai import OpenAI
 from langsmith import traceable
 from db.types import Track
 from backend.chat.schemas import UserContext
-from backend.chat.graph.workflow import record_shown_tracks
+from backend.chat.graph.workflow import record_question, record_shown_tracks
 from backend.observability import record_usage, stream_result
 from backend.chat.answer import (
-    AnswerHints, answer_input, answer_instructions, count_notice,
+    AnswerHints, answer_input, answer_instructions, count_notice, followup_fallback,
     lookup_answer_input, lookup_answer_instructions,
 )
 
@@ -82,23 +82,32 @@ def stream_answer(
             stream=True,
         )
 
+        answer = ""
         with stream:
             for event in stream:
                 if event.type == "response.output_text.delta":
+                    answer += event.delta
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
                     record_usage(getattr(getattr(event, "response", None), "usage", None), os.environ["LLM_MODEL"])
+                    followup = followup_fallback(answer, hints.followup_info if hints else [])
+                    if followup:
+                        yield sse("text", {"delta": " " + followup})
                     notice = count_notice(hints, len(tracks))
                     if notice:
                         yield sse("text", {"delta": "\n\n" + notice})
                     cards = [track.model_dump() for track in tracks]
-                    if thread_id:
-                        record_shown_tracks(thread_id, cards)
                     yield sse(
                         "tracks",
                         {"tracks": cards},
                     )
+                    # NOTE: 생성기는 카드 청크가 전송된 뒤에만 다시 실행된다. 전송 중 연결이 끊기면
+                    # 여기까지 오지 않으므로 노출 이력과 질문 횟수가 확정되지 않는다.
+                    if thread_id:
+                        record_shown_tracks(thread_id, cards)
+                        if hints and hints.followup_info:
+                            record_question(thread_id)
                     yield sse("done", {})
                     return
 

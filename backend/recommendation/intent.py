@@ -37,6 +37,10 @@ def known_genres() -> list[str]:
     return _genre_cache
 
 
+# 추천 방향을 가르는 정보. 순서가 질문에서 먼저 언급할 우선순위다.
+MISSING_INFO = ("place", "activity", "mood")
+
+
 def classify_instructions(genres: list[str]) -> str:
     """의도 결정 순서와 필드별 추출 규칙을 반환한다."""
 
@@ -65,7 +69,13 @@ artist로 조회하고, "그 곡 다시"는 해당 title과 artist를 모두 지
    해석하고 3번의 참조 대상 없음으로 처리하지 마세요.
    예: "오늘 먹을 음식 골라주고 그 음식에 어울리는 노래"는 식사할 때 듣는 음악 추천입니다.
 2. 음악 요청이 없으면 사용법·지원 범위 질문은 guide, 인사·잡담·다른 주제·의미 불명 입력은 out_of_scope입니다.
+   단, 지금 있는 장소·날씨·풍경·하는 일·기분을 서술하면 음악 단어가 없어도 그 순간에 어울리는 음악을
+   원하는 recommend입니다. 예: "눈 오네", "바다에 왔어", "오늘 너무 지쳤어".
+   날씨·장소 정보를 묻는 질문은 음악 요청이 아니므로 out_of_scope입니다. 예: "내일 비 와?", "바다 어디가 좋아?".
 3. 이전 대화를 가리키는 필수 참조 대상이 기록에 없거나 모호하면 clarify입니다.
+   곡 선택을 챗봇에게 맡기는 말("네가 알아서 골라줘", "아무거나")은 참조가 아니라 recommend입니다.
+   기록의 "챗봇 대화 상태"에 asked_info가 있으면 "음", "글쎄", "딱히" 같은 짧은 말은 그 질문의 답이므로
+   clarify가 아니라 recommend입니다.
    "그 노래", "그 가수"의 대상을 기록에서 찾을 수 있으면 그 대상으로 계속 판단하세요.
 4. 필수 조건이 아래 미지원 조건이면 아티스트·곡 지정 여부와 관계없이 recommend로 두고
    recommend_unsupported_condition=true로 표시하세요.
@@ -100,6 +110,23 @@ artist로 조회하고, "그 곡 다시"는 해당 title과 artist를 모두 지
 - 대상은 이번 요청 또는 기록에서 해석된 것만 쓰세요. 대상을 알 수 없는 지시어는 3번에 따라 clarify입니다.
   제목만 말했으면 모델 지식으로 가수를 추가하지 마세요. 예: "dynamite 노래"는 제목만 채웁니다.
   "X 노래"에서 제목과 가수 중 어느 쪽인지 불명확하면 더 그럴듯한 한쪽에만 X를 넣으세요.
+
+대화형 추천 필드
+- missing_info: 추천 방향을 크게 가르는 정보 중 이번 요청과 이어받은 맥락에서 아직 모르는 것을
+  place(장소), activity(지금 하는 일), mood(원하는 느낌)로 고르세요.
+  장소나 하는 일 중 하나와 원하는 느낌이 함께 있으면 빈 목록입니다. 예: "퇴근길에 잔잔한 노래"는 [].
+  분위기 형용사·장르가 있거나 하는 일이 분위기를 정하면(운동→활기찬, 공부→집중) 원하는 느낌은 아는 것입니다.
+  예: "운동할 때 들을 노래", "공부할 때 들을 클래식", "신나는 케이팝"은 [].
+  장소는 하는 일도 모를 때만 missing_info에 넣습니다. 하는 일을 알면 장소를 묻지 않습니다.
+  장르·연도와 분위기를 직접 지정한 음악 요청은 장소·하는 일을 몰라도 빈 목록입니다. 예: "신나는 2010년대 케이팝".
+  "바다에 왔어"는 ["activity", "mood"], "노래 두 곡만"은 ["place", "activity", "mood"]입니다.
+  곡 선택을 맡기는 요청("아무거나", "알아서 골라줘")과 recommend가 아닌 요청은 빈 목록입니다.
+- episode_relation: 이전 추천 요청에 대한 답·보충·피드백이면 continue, 새 추천 요청이거나 이전 추천
+  요청이 없으면 new입니다. 기록의 "챗봇 대화 상태"에 asked_info(직전에 물은 정보)가 있으면 "몰라", "창가야" 같은
+  짧은 답도 그 질문의 답이므로 continue입니다. asked_info에 답하는 말은 "창가 카페에서 잔잔하게 듣고 있어"처럼
+  완결된 문장이어도 continue가 우선입니다. 그 밖에 장소·상황이 다른 추천 요청이나, 이번 메시지만으로 원하는
+  음악을 알 수 있는 완결된 요청("이번엔 ~", "그거 말고 ~", 장르·분위기를 새로 정한 요청)은 new입니다.
+- 정보가 부족해도 recommend_query는 아는 내용으로 채우세요. 아무 정보도 없으면 "편하게 듣기 좋은 노래"입니다.
 
 공통 필드와 검색 문장
 - requested_count: 이번 요청의 곡 수를 정수로 추출하세요. "한 곡만"은 1입니다.
@@ -167,6 +194,11 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "requested_count": {"type": ["integer", "null"]},
                             "has_non_music_request": {"type": "boolean"},
                             "response_style": {"type": ["string", "null"]},
+                            "missing_info": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": list(MISSING_INFO)},
+                            },
+                            "episode_relation": {"type": "string", "enum": ["new", "continue"]},
                         },
                         "required": [
                             "intent",
@@ -182,6 +214,8 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                             "requested_count",
                             "has_non_music_request",
                             "response_style",
+                            "missing_info",
+                            "episode_relation",
                         ],
                         "additionalProperties": False,
                     },
@@ -211,4 +245,9 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
     requested = data.get("recommend_genres") or []
     kept = [canonical[g.lower()] for g in requested if isinstance(g, str) and g.lower() in canonical]
     data["recommend_genres"] = kept or None
+    # NOTE: 질문 대상·에피소드는 코드가 상태로 쓰므로 정해진 값만 남기고 순서는 장소→하는 일→느낌으로 맞춘다.
+    asked = data.get("missing_info") if isinstance(data.get("missing_info"), list) else []
+    data["missing_info"] = [name for name in MISSING_INFO if name in asked]
+    if data.get("episode_relation") not in ("new", "continue"):
+        data["episode_relation"] = "new"
     return data

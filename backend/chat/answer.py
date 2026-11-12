@@ -1,7 +1,8 @@
 """최종 추천·조회 답변 입력과 지시문."""
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from db.types import Track
 from backend.chat.schemas import UserContext
 from backend.recommendation.counts import MAX_TRACK_COUNT, track_limit
@@ -23,6 +24,7 @@ class AnswerHints:
     max_year: int | None = None
     original_message: str = ""
     genres: list[str] | None = None
+    followup_info: list[str] = field(default_factory=list)
 
     @classmethod
     def from_classification(cls, result: dict) -> "AnswerHints":
@@ -34,6 +36,7 @@ class AnswerHints:
             max_year=result.get("recommend_max_year") if result.get("intent") == "recommend" else None,
             original_message=result.get("message", ""),
             genres=result.get("recommend_genres") if result.get("intent") == "recommend" else None,
+            followup_info=(result.get("followup_info") or []) if result.get("intent") == "recommend" else [],
         )
 
     def year_condition(self) -> str:
@@ -46,6 +49,29 @@ class AnswerHints:
         if self.max_year:
             return f"{self.max_year}년까지 발매곡만 검색함"
         return "없음"
+
+
+FOLLOWUP_LABELS = {"place": "장소", "activity": "지금 하는 일", "mood": "원하는 느낌"}
+
+
+# 정보를 요청하는 표현이나 열린 의문사로 끝나는 물음이 있으면 질문을 전달한 것으로 본다.
+# NOTE: "음악이 필요하죠?" 같은 수사적 물음은 질문이 아니므로 "?"만으로는 인정하지 않는다.
+ASKED = re.compile(
+    r"(알려|말씀해|설명해|들려) ?주(시면|세요|실래요|시겠어요|실 수)|(어디|무엇|뭐|어떤|어떻게|언제|누구)[^.?!]*\?"
+)
+
+
+def followup_label(info: list[str]) -> str:
+    return ", ".join(FOLLOWUP_LABELS[name] for name in info if name in FOLLOWUP_LABELS) or "없음"
+
+
+def followup_fallback(answer: str, info: list[str]) -> str:
+    """답변 LLM이 질문을 빠뜨렸을 때만 코드가 붙이는 열린 질문. 질문이 있으면 빈 문자열."""
+    if not info or ASKED.search(answer):
+        return ""
+    label = followup_label(info)
+    particle = "을" if (ord(label[-1]) - 0xAC00) % 28 else "를"  # 받침 유무
+    return f"{label}{particle} 알려주시면 더 잘 맞는 곡을 찾아드릴게요."
 
 
 def count_notice(hints: AnswerHints | None, count: int) -> str:
@@ -84,6 +110,7 @@ def _request_lines(
         f"별도로 붙는 고정 개수 안내: {count_notice(hints, len(tracks)) or '없음'}\n"
         f"적용된 발매연도 조건: {hints.year_condition()}\n"
         f"적용된 장르 필터: {json.dumps(hints.genres or [], ensure_ascii=False)}\n"
+        f"추가 질문: {followup_label(hints.followup_info)}\n"
         f"사용자 컨텍스트: {json.dumps(context, ensure_ascii=False)}\n"
     )
 
@@ -129,7 +156,13 @@ def answer_instructions() -> str:
         "모호하지만 해석 가능한 상황도 검색 문장에 있는 방향까지만 설명하세요. "
         "예: '하루를 정리하는 퇴근길에 어울릴 잔잔한 분위기로 찾아봤어요.' "
         "적용된 장르·발매연도 필터는 검색 범위를 설명하는 근거입니다. "
-        "추가 한계 안내가 필요하면 음악 안내 다음 문단에 짧게 작성하세요.\n"
+        "추가 한계 안내가 필요하면 음악 안내 다음 문단에 짧게 작성하세요. "
+        "추가 질문이 '없음'이 아니면 안내에 이어, 상황에 공감하고 우선 어울리는 곡을 추천했다고 밝힌 뒤 "
+        "추가 질문에 적힌 정보를 알려주시면 더 잘 맞는 곡을 찾아드릴 수 있다고 친절하게 물어보세요. "
+        "이때는 3~4문장까지 쓸 수 있습니다. 질문은 열린 질문 하나로 쓰고, 'A가 좋으세요, B가 좋으세요?'처럼 "
+        "둘 중 하나를 고르게 하지 마세요. 예: '비가 오는 상황이시군요. 우선 비 오는 날과 어울리는 노래를 "
+        "추천해봤어요. 현재 어디에 있으신지, 어떤 분위기인지 등 조금 더 자세한 설명을 해주시면 더 좋은 노래를 "
+        "추천해드릴 수 있어요.' 추가 질문이 '없음'이면 질문하지 마세요.\n"
         + _SCOPE_RULES
     )
 

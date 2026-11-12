@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from backend.chat.graph.nodes import (
     classify_node,
+    dialogue_node,
     embed_node,
     jev_node,
     lookup_node,
@@ -49,22 +50,34 @@ def route_by_jev(state: RecommendationState) -> str:
 def route_by_intent(state: RecommendationState) -> str:
     """classify_node가 채운 intent·조건 필드에 따라 다음 노드를 정한다.
 
-    guide/clarify/out_of_scope와, recommend인데 지원 불가능한 조건·정보 부족인
-    경우는 더 할 DB 작업이 없으므로 그래프를 바로 끝낸다. prepare_recommendation이
-    intent와 각 필드를 보고 어떤 고정/생성 안내를 내려줄지 결정한다.
+    guide/clarify/out_of_scope와, recommend인데 지원 불가능한 조건인 경우는 더 할 DB 작업이
+    없으므로 그래프를 바로 끝낸다. prepare_recommendation이 intent와 각 필드를 보고 어떤
+    고정/생성 안내를 내려줄지 결정한다. 정보가 부족한 추천도 곡을 먼저 주고 답변에서 묻도록
+    dialogue로 보낸다.
     """
 
     intent = state["intent"]
     count = state.get("requested_count")
-    if intent in ("recommend", "lookup") and count is not None and count < 1:
+    if intent == "lookup" and count is not None and count < 1:
         return END
     if intent == "recommend":
-        if state["recommend_unsupported_condition"] or not state["recommend_has_enough_info"]:
-            return END
-        return "embed"
+        # NOTE: 고속 모드에서 Jev가 실패해 classify로 온 턴은 질문을 보내지 않으므로 대화 상태를 건드리지 않는다.
+        if state.get("fast_mode"):
+            return route_after_dialogue(state)
+        # 미지원 조건·잘못된 곡 수도 새 추천 요청이라 에피소드 전이는 dialogue에서 하고, 검색 여부는 그 뒤에 정한다.
+        return "dialogue"
     if intent == "lookup":
         return "lookup"
     return END
+
+
+def route_after_dialogue(state: RecommendationState) -> str:
+    """에피소드를 정한 뒤, 지원하지 못하는 조건이나 잘못된 곡 수면 검색 없이 끝낸다."""
+
+    count = state.get("requested_count")
+    if state["recommend_unsupported_condition"] or (count is not None and count < 1):
+        return END
+    return "embed"
 
 
 def build_graph(*, photo: bool = False):
@@ -76,6 +89,7 @@ def build_graph(*, photo: bool = False):
     graph = StateGraph(RecommendationState)
 
     graph.add_node("classify", classify_node)
+    graph.add_node("dialogue", dialogue_node)
     graph.add_node("embed", embed_node)
     graph.add_node("search", search_node)
     graph.add_node("lookup", lookup_node)
@@ -87,8 +101,9 @@ def build_graph(*, photo: bool = False):
     else:
         graph.add_conditional_edges(START, route_entry, {"classify": "classify", "jev": "jev"})
     graph.add_conditional_edges(
-        "classify", route_by_intent, {"embed": "embed", "lookup": "lookup", END: END},
+        "classify", route_by_intent, {"dialogue": "dialogue", "embed": "embed", "lookup": "lookup", END: END},
     )
+    graph.add_conditional_edges("dialogue", route_after_dialogue, {"embed": "embed", END: END})
     graph.add_conditional_edges(
         "jev", route_by_jev, {"search": "search", "classify": "classify", END: END},
     )
@@ -112,5 +127,16 @@ def record_shown_tracks(thread_id: str, tracks: list[dict]) -> None:
              for rank, track in enumerate(tracks, start=1)
          ]},
         # 검색·조회 모두 종료된 상태를 갱신하며 후속 노드를 예약하지 않는다.
+        as_node="search",
+    )
+
+
+def record_question(thread_id: str) -> None:
+    """질문이 담긴 답변과 카드가 전송된 시점에 질문 횟수를 늘리고, 실제로 물은 정보를 확정한다."""
+    graph, config = build_graph(), {"configurable": {"thread_id": thread_id}}
+    values = graph.get_state(config).values
+    graph.update_state(
+        config,
+        {"question_count": values.get("question_count", 0) + 1, "asked_info": values.get("followup_info") or []},
         as_node="search",
     )
