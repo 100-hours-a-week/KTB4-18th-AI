@@ -8,7 +8,7 @@ from langchain_core.runnables import RunnableConfig
 
 from backend.chat.graph.state import RecommendationState
 from db.types import Track
-from backend.recommendation.intent import classify
+from backend.recommendation.intent import MISSING_INFO, classify
 from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
@@ -19,16 +19,25 @@ from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
 from backend.recommendation.counts import track_limit
 
+# 같은 추천 요청(에피소드)에서 보낼 수 있는 추가 질문 수의 상한.
+MAX_QUESTIONS = 2
+
 
 def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     """대화 기록을 참고해 사용자 메시지의 의도·대상·조건을 분류한다.
     고속 모드 요청이면 fast_mode를 켜서 다음 턴부터 jev_node로 들어가게 한다."""
 
     messages = list(state["messages"])
+    if state.get("episode"):
+        status = {"question_count": state.get("question_count", 0), "asked_info": state.get("asked_info") or [],
+                  "known_info": state.get("known_info") or []}
+        messages.insert(-1, "챗봇 대화 상태: " + json.dumps(status, ensure_ascii=False))
     if state.get("recent_tracks"):
         messages.insert(-1, "챗봇이 최근 전송한 곡 목록(번호는 카드 순서): "
                         + json.dumps(state["recent_tracks"], ensure_ascii=False))
-    result = classify(config["configurable"]["client"], messages)
+    # NOTE: 이번 턴 값으로 덮어써서 지난 턴의 부족 정보·질문 대상이 조회·안내 턴에 새지 않게 한다.
+    result = {"missing_info": [], "episode_relation": "new",
+              **classify(config["configurable"]["client"], messages), "followup_info": []}
     if result["intent"] == "fast_mode":
         result["fast_mode"] = True
     return result
@@ -197,6 +206,23 @@ def jev_node(state: RecommendationState) -> dict:
         # NOTE: 보여준 곡(shown_track_ids)은 lookup_node와 같이 SSE로 카드를 보낼 때 기록한다.
         result |= {"lookup_status": "found", "lookup_tracks": tracks}
     return result
+
+
+def dialogue_node(state: RecommendationState) -> dict:
+    """추천 턴마다 에피소드와 이번 답변에서 물을 정보를 코드로 정한다. LLM은 부르지 않는다.
+
+    NOTE: 질문 횟수는 여기서 늘리지 않는다. 답변과 카드가 실제로 전송될 때(workflow.record_question) 센다.
+    """
+
+    episode, count, asked = state.get("episode", 0), state.get("question_count", 0), state.get("asked_info") or []
+    if state.get("episode_relation") != "continue" or not episode:
+        episode, count, asked = episode + 1, 0, []
+    missing = state.get("missing_info") or []
+    requested = state.get("requested_count")
+    searchable = not state.get("recommend_unsupported_condition") and (requested is None or requested >= 1)
+    ask = missing if count < MAX_QUESTIONS and searchable else []
+    return {"episode": episode, "question_count": count, "asked_info": asked, "followup_info": list(ask),
+            "known_info": [name for name in MISSING_INFO if name not in missing]}
 
 
 def embed_node(state: RecommendationState) -> dict:

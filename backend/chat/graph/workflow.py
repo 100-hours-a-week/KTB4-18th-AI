@@ -114,3 +114,14 @@ def record_shown_tracks(thread_id: str, tracks: list[dict]) -> None:
         # 검색·조회 모두 종료된 상태를 갱신하며 후속 노드를 예약하지 않는다.
         as_node="search",
     )
+
+
+def record_question(thread_id: str) -> None:
+    """질문이 담긴 답변과 카드가 전송된 시점에 질문 횟수를 늘리고, 실제로 물은 정보를 확정한다."""
+    graph, config = build_graph(), {"configurable": {"thread_id": thread_id}}
+    values = graph.get_state(config).values
+    graph.update_state(
+        config,
+        {"question_count": values.get("question_count", 0) + 1, "asked_info": values.get("followup_info") or []},
+        as_node="search",
+    )

@@ -47,6 +47,16 @@ class RecommendationState(TypedDict, total=False):
     has_non_music_request: bool
     response_style: str | None
 
+    # ── 대화형 추천. classify_node가 부족한 정보·요청 관계를, dialogue_node가 에피소드를 채운다 ──
+    # NOTE: 질문 횟수 상한은 LLM이 아니라 코드가 지키도록 에피소드(같은 추천 요청) 단위로 센다.
+    missing_info: list[str]  # place·activity·mood 중 아직 모르는 정보
+    episode_relation: str  # "new" | "continue"
+    episode: int
+    question_count: int  # 이번 에피소드에서 실제로 전송된 추가 질문 수
+    followup_info: list[str]  # 이번 턴 답변에서 물을 정보. 비면 묻지 않는다
+    asked_info: list[str]  # 실제로 전송된 마지막 질문의 정보. 분류 LLM이 짧은 답을 해석할 때 쓴다
+    known_info: list[str]  # 이번 턴까지 확보한 정보(missing_info의 나머지)
+
     # ── embed_node가 채움 ──
     query_vector: list[float]
 
