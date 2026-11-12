@@ -663,3 +663,21 @@ def test_ambiguous_reference_with_recent_cards_asks_for_card_order(client, monke
     assert "카드 순서나 곡 제목" in response.text
     assert "대화에서 찾지 못했어요" not in response.text
     assert fake_openai.responses.calls == []
+
+
+def test_past_tense_is_not_a_question():
+    from backend.chat.answer import followup_fallback
+    assert followup_fallback("알려주신 비 오는 상황에 맞춰 먼저 추천했어요.", ["place"]) != ""
+    assert followup_fallback("어디에 계신지 알려주시면 더 맞춰 드릴게요.", ["place"]) == ""
+
+
+def test_rhetorical_question_mark_is_not_a_followup():
+    from backend.chat.answer import followup_fallback
+    assert followup_fallback("비 오는 날엔 음악이 필요하죠? 먼저 추천했어요.", ["place"]) != ""
+    assert followup_fallback("지금 어디에 계세요?", ["place"]) == ""
+
+
+def test_followup_fallback_uses_matching_particle():
+    from backend.chat.answer import followup_fallback
+    assert followup_fallback("먼저 추천했어요.", ["place"]).startswith("장소를 ")
+    assert followup_fallback("먼저 추천했어요.", ["mood"]).startswith("원하는 느낌을 ")

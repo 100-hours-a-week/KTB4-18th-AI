@@ -1,7 +1,8 @@
 """최종 추천·조회 답변 입력과 지시문."""
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from db.types import Track
 from backend.chat.schemas import UserContext
 from backend.recommendation.counts import MAX_TRACK_COUNT, track_limit
@@ -23,6 +24,7 @@ class AnswerHints:
     max_year: int | None = None
     original_message: str = ""
     genres: list[str] | None = None
+    followup_info: list[str] = field(default_factory=list)
 
     @classmethod
     def from_classification(cls, result: dict) -> "AnswerHints":
@@ -34,6 +36,7 @@ class AnswerHints:
             max_year=result.get("recommend_max_year") if result.get("intent") == "recommend" else None,
             original_message=result.get("message", ""),
             genres=result.get("recommend_genres") if result.get("intent") == "recommend" else None,
+            followup_info=(result.get("followup_info") or []) if result.get("intent") == "recommend" else [],
         )
 
     def year_condition(self) -> str:
@@ -46,6 +49,29 @@ class AnswerHints:
         if self.max_year:
             return f"{self.max_year}년까지 발매곡만 검색함"
         return "없음"
+
+
+FOLLOWUP_LABELS = {"place": "장소", "activity": "지금 하는 일", "mood": "원하는 느낌"}
+
+
+# 정보를 요청하는 표현이나 열린 의문사로 끝나는 물음이 있으면 질문을 전달한 것으로 본다.
+# NOTE: "음악이 필요하죠?" 같은 수사적 물음은 질문이 아니므로 "?"만으로는 인정하지 않는다.
+ASKED = re.compile(
+    r"(알려|말씀해|설명해|들려) ?주(시면|세요|실래요|시겠어요|실 수)|(어디|무엇|뭐|어떤|어떻게|언제|누구)[^.?!]*\?"
+)
+
+
+def followup_label(info: list[str]) -> str:
+    return ", ".join(FOLLOWUP_LABELS[name] for name in info if name in FOLLOWUP_LABELS) or "없음"
+
+
+def followup_fallback(answer: str, info: list[str]) -> str:
+    """답변 LLM이 질문을 빠뜨렸을 때만 코드가 붙이는 열린 질문. 질문이 있으면 빈 문자열."""
+    if not info or ASKED.search(answer):
+        return ""
+    label = followup_label(info)
+    particle = "을" if (ord(label[-1]) - 0xAC00) % 28 else "를"  # 받침 유무
+    return f"{label}{particle} 알려주시면 더 잘 맞는 곡을 찾아드릴게요."
 
 
 def count_notice(hints: AnswerHints | None, count: int) -> str:
