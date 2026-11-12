@@ -13,7 +13,7 @@ from backend.recommendation.embedding import embed_query
 from backend.providers.jev import JevUnavailable, decide
 from backend.recommendation.fast import (
     artist_question, candidate_parts, embed_candidates, find_lookup_rows, genre_filter, genre_question, jev_state,
-    requested_count, resolve_intent, resolve_years, unsupported_action, year_questions,
+    requested_count, resolve_intent, resolve_years, unsupported_action, wants_exit_fast, year_questions,
 )
 from backend.providers.openrouter import get_embedding_client
 from backend.recommendation.retrieval import lookup_tracks_db, vector_recommendation
@@ -31,6 +31,14 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     result = classify(config["configurable"]["client"], messages)
     if result["intent"] == "fast_mode":
         result["fast_mode"] = True
+    # NOTE: 고속 모드의 이어받기·재요청은 "마지막으로 검색한 추천 턴의 검색 문장"(search_parts)에서 이어간다.
+    # classify는 조회·모드 전환·사용법 턴에도 recommend_query를 채우므로(원문 그대로), 실제로 검색하는
+    # 추천 턴(미지원·정보 부족이 아님)일 때만 남긴다. 안 그러면 "고속 모드 켜줘" 다음의 "다른 곡으로 더 줘"가
+    # "고속 모드 켜줘"로 검색된다.
+    searches = (result["intent"] == "recommend" and result.get("recommend_has_enough_info")
+                and not result.get("recommend_unsupported_condition"))
+    if searches:
+        result["search_parts"] = [result["recommend_query"]]
     return result
 
 
@@ -57,6 +65,16 @@ JEV_QUESTIONS = {
         "instructions": "음악 외 요청 부분(드라마·영화·책 제목 등)은 무시하고, 이번 메시지에 특정 곡 제목이 "
                         "들어 있는가",
         "criteria": {"true": "곡 제목을 말함", "false": "아티스트만 말했거나 곡 제목이 없음"},
+    },
+    # NOTE: 고속 모드에선 classify를 거치지 않으니 끄기 요청도 Jev가 알아들어야 한다. 처음엔 못 알아들으면
+    # 고속 모드에 갇힐까 봐 "채팅방 새로 열기"로만 끄게 했는데, 구체적인 사실 질문 하나로 물으니
+    # 끄기 요청 7문장은 0.89~0.97, "다시 추천해줘"·"느린 노래"·"그만 듣고 싶은 노래 말고" 같은
+    # 헷갈리는 문장은 최고 0.65로 갈렸다(fast.wants_exit_fast).
+    "exit_fast": {
+        "type": "noul",
+        "instructions": "이번 메시지가 고속 모드를 끄고 일반 모드(설명이 있는 대화)로 돌아가 달라는 요청인가",
+        "criteria": {"true": "고속 모드를 끄거나 일반 모드로 돌아가 달라고 함",
+                     "false": "노래 추천·조회·잡담 등 모드 전환과 무관한 요청"},
     },
     # NOTE: classify는 "좀 더 신나게"를 이전 대화와 합쳐 "비 오는 날 듣기 좋은 신나는 노래"로 다시
     # 써주지만 Jev는 문장을 만들 수 없다. 대신 지난 추천 요청과의 관계를 고르게 하고, 지난 검색
@@ -130,12 +148,9 @@ def jev_node(state: RecommendationState) -> dict:
     messages = state["messages"]
     shown_ids = {int(tid) for tid in state.get("shown_track_ids", [])}
 
-    # NOTE: 지난 턴을 classify가 처리했으면(고속 모드 전, Jev 폴백) search_parts가 없거나 낡았다.
-    # 그럴 땐 classify가 쓴 검색 문장(이 시점엔 아직 덮어쓰기 전인 recommend_query)을 출발점으로 삼는다.
+    # NOTE: search_parts는 마지막 추천 턴의 검색 문장이다. 고속 모드면 jev_node가, 일반 모드(고속 모드 전,
+    # Jev 폴백 포함)면 classify_node가 추천 턴에서만 남긴다.
     previous_parts = state.get("search_parts") or []
-    previous_query = state.get("recommend_query")
-    if previous_query and " ".join(previous_parts) != previous_query:
-        previous_parts = [previous_query]
     candidates = candidate_parts(previous_parts, state["message"])
 
     # NOTE: 후보 검색 문장 임베딩을 먼저 출발시켜 두고 Jev를 부른다. 둘이 동시에 진행돼서
@@ -147,6 +162,10 @@ def jev_node(state: RecommendationState) -> dict:
         questions = {**JEV_QUESTIONS, "artist": artist_question(), "genre": genre_question(),
                      **year_questions()}
         answers = decide(jev_state(messages), questions)
+        # NOTE: 끄기 요청은 다른 판단보다 먼저 본다. fast_mode를 끄면 다음 턴부터 classify로 들어간다.
+        # 미리 출발시킨 임베딩은 기다리지 않고 버린다.
+        if wants_exit_fast(answers):
+            return {"jev_failed": False, "jev_unsupported": False, "fast_mode": False, "intent": "fast_mode_off"}
         intent = resolve_intent(answers)
         # NOTE: 미지원 조건은 lookup도 확인한다. "아이유 노래 중에 잘 모르는 곡만"은 Jev가 아이유를 확신해
         # lookup이 되는데, 그대로 두면 아이유 곡이 아무거나 나가는 조용한 오답이 된다.

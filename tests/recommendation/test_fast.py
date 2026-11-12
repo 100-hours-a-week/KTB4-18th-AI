@@ -6,7 +6,7 @@ import pytest
 
 from backend.recommendation.fast import (
     next_search_parts, pattern_year_range, requested_count, resolve_years, unsupported_action, unsupported_score,
-    year_range,
+    wants_exit_fast, year_range,
 )
 
 
@@ -82,6 +82,19 @@ def test_next_search_parts_keeps_recent_messages_only():
 def test_next_search_parts_without_previous_starts_new():
     answers = {"continues": {"choice": "repeat", "confidence": 0.9}}
     assert next_search_parts([], "하나 더 줘", answers) == ["하나 더 줘"]
+
+
+@pytest.mark.parametrize(
+    ("score", "expected"),
+    [
+        (0.89, True),   # 끄기 요청 중 가장 낮았던 "이제 천천히 설명하면서 추천해줘" 수준
+        (0.8, True),    # 기준(EXIT_CONFIDENT)과 같으면 끔
+        (0.79, False),  # 바로 아래면 유지
+        (0.65, False),  # 헷갈리는 문장 중 가장 높았던 "모드 바꾸고 싶어" 수준
+    ],
+)
+def test_wants_exit_fast_boundaries(score, expected):
+    assert wants_exit_fast({"exit_fast": {"noul": score}}) is expected
 
 
 def test_unsupported_score_is_highest_of_four():

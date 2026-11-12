@@ -34,6 +34,7 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         "그 노래 찾아줘": ("lookup", "none", 0.6, 0.5, "none", "none", "none", "new", 0.05),
         "아이유 노래 중 잘 모르는 곡만": ("lookup", "IU", 0.99, 0.05, "K-Pop", "none", "none", "new", 0.93),
         "빠른 노래, 한 120 BPM 정도면": ("recommend", "none", 0.9, 0.0, "none", "none", "none", "new", 0.88),
+        "일반 모드로 돌아가줘": ("out_of_scope", "none", 0.9, 0.0, "none", "none", "none", "new", 0.05),
     }
 
     def classify(_client, messages):
@@ -41,7 +42,10 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
         if messages[-1] == "그 노래 찾아줘":
             return {"intent": "lookup", "lookup_song": None, "lookup_artist": None}
         if messages[-1] == "빠른 노래, 한 120 BPM 정도면":
-            return {"intent": "recommend", "recommend_unsupported_condition": True, "recommend_has_enough_info": True}
+            return {"intent": "recommend", "recommend_unsupported_condition": True, "recommend_has_enough_info": True,
+                    "recommend_query": "빠른 노래"}
+        if messages[-1] == "사용법 알려줘":
+            return {"intent": "guide"}
         return {"intent": "fast_mode", "recommend_genres": ["Pop"]}
 
     def decide(state, _questions):
@@ -57,7 +61,8 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
                 # "90년대 잔잔한 힙합"만 2곡을 요청한 것으로 둔다.
                 "requested_count": {"choice": "2" if message == "90년대 잔잔한 힙합" else "none", "confidence": 0.9},
                 "by_lyrics": {"noul": 0.05}, "by_ranking": {"noul": ranking},
-                "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05}}
+                "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05},
+                "exit_fast": {"noul": 0.97 if message == "일반 모드로 돌아가줘" else 0.05}}
 
     akmu_row = SimpleNamespace(track_id=1, title="How People Move", artist="AKMU",
                                artwork_url="a", preview_url="p", store_url="s")
@@ -107,10 +112,15 @@ def test_fast_mode_switches_entry_to_jev(monkeypatch):
     # 애매하면(0.7~0.9) 그 턴만 classify가 지원 여부를 다시 판단한다.
     rechecked = send("빠른 노래, 한 120 BPM 정도면")
     assert rechecked["recommend_unsupported_condition"] is True
+    # 끄기 요청이면 fast_mode를 끄고, 다음 턴부터는 Jev가 아니라 classify가 받는다.
+    turned_off = send("일반 모드로 돌아가줘")
+    assert turned_off["intent"] == "fast_mode_off"
+    assert turned_off["fast_mode"] is False
+    assert send("사용법 알려줘")["intent"] == "guide"
 
-    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "빠른 노래, 한 120 BPM 정도면"]
+    assert classify_calls == ["고속 모드 켜줘", "그 노래 찾아줘", "빠른 노래, 한 120 BPM 정도면", "사용법 알려줘"]
     assert jev_calls == ["90년대 잔잔한 힙합", "오늘 점심 뭐 먹지", "좀 더 신나게", "악뮤 노래", "그 노래 찾아줘",
-                         "아이유 노래 중 잘 모르는 곡만", "빠른 노래, 한 120 BPM 정도면"]
+                         "아이유 노래 중 잘 모르는 곡만", "빠른 노래, 한 120 BPM 정도면", "일반 모드로 돌아가줘"]
     # 임베딩은 Jev 답을 기다리지 않고 후보마다 미리 출발한다("좀 더 신나게" 턴은 new/continue/repeat 후보 3개).
     assert {"좀 더 신나게", "90년대 잔잔한 힙합 좀 더 신나게", "90년대 잔잔한 힙합"} <= set(embedded)
     # 검색에는 Jev 답에 맞는 후보의 벡터가 쓰인다. 장르·연도는 고속 모드 전 classify가 남긴
@@ -153,3 +163,47 @@ def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
     assert classify_calls == ["고속 모드 켜줘", "사용법 알려줘"]
     assert result["intent"] == "guide"
     assert result["fast_mode"] is True
+
+
+def test_fast_repeat_continues_from_last_recommend_turn(monkeypatch):
+    # 일반 모드 추천 → 조회 → 미지원 → 고속 모드 켜기 → 재요청 순서. 조회·미지원·켜기 턴에도 classify가
+    # recommend_query를 채우지만, 재요청은 마지막으로 "검색한" 추천 턴의 문장으로 찾아야 한다.
+    classified = {
+        "퇴근길 노래": {"intent": "recommend", "recommend_has_enough_info": True,
+                     "recommend_unsupported_condition": False, "recommend_query": "퇴근길에 듣기 좋은 잔잔한 노래"},
+        "아이유 노래": {"intent": "lookup", "lookup_song": None, "lookup_artist": "IU", "recommend_query": "아이유 노래"},
+        "가사에 비가 나오는 노래": {"intent": "recommend", "recommend_has_enough_info": True,
+                            "recommend_unsupported_condition": True, "recommend_query": "가사에 비가 나오는 노래"},
+        "고속 모드 켜줘": {"intent": "fast_mode", "recommend_query": "고속 모드 켜줘"},
+    }
+    searched = []
+
+    def decide(_state, _questions):
+        return {"exit_fast": {"noul": 0.05}, "intent": {"choice": "recommend"},
+                "artist": {"choice": "none", "confidence": 0.9}, "has_title": {"noul": 0.0},
+                "genre": {"choice": "none", "confidence": 0.9}, "year_from": {"choice": "none", "confidence": 0.9},
+                "year_to": {"choice": "none", "confidence": 0.9}, "continues": {"choice": "repeat", "confidence": 0.9},
+                "requested_count": {"choice": "none", "confidence": 0.9}, "by_lyrics": {"noul": 0.05},
+                "by_ranking": {"noul": 0.05}, "by_number": {"noul": 0.05}, "by_topic": {"noul": 0.05}}
+
+    monkeypatch.setattr(nodes, "classify", lambda _client, messages: classified[messages[-1]])
+    monkeypatch.setattr(nodes, "decide", decide)
+    monkeypatch.setattr(nodes, "artist_question", lambda: {})
+    monkeypatch.setattr(nodes, "genre_question", lambda: {})
+    monkeypatch.setattr(nodes, "year_questions", lambda: {})
+    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(nodes, "embed_query", lambda _client, text: [text])
+    monkeypatch.setattr(fast, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(fast, "embed_query", lambda _client, text: [text])
+    monkeypatch.setattr(nodes, "lookup_tracks_db", lambda **_kwargs: [])
+    monkeypatch.setattr(nodes, "vector_recommendation", lambda vector, **_kwargs: searched.append(vector[0]) or [])
+    config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
+
+    def send(message):
+        return workflow.build_graph().invoke({"message": message, "messages": [message]}, config=config)
+
+    for message in ("퇴근길 노래", "아이유 노래", "가사에 비가 나오는 노래", "고속 모드 켜줘"):
+        send(message)
+    send("다른 곡으로 더 줘")
+
+    assert searched == ["퇴근길에 듣기 좋은 잔잔한 노래", "퇴근길에 듣기 좋은 잔잔한 노래"]
