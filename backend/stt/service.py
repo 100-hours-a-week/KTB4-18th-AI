@@ -5,14 +5,17 @@ import os
 
 import httpx
 from fastapi import UploadFile
+from langsmith import traceable
 
 from backend.core.errors import _error, _unavailable
 from backend.stt.audio import MAX_AUDIO_BYTES, _audio_format, _normalize_audio
+from backend.observability import record_usage
 
 STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 DEFAULT_STT_MODEL = "openai/whisper-large-v3-turbo"
 
 
+@traceable(name="음성 전사", run_type="llm", process_inputs=lambda values: {"content_type": values["audio"].content_type})
 def transcribe_audio(audio: UploadFile) -> str:
     """검증된 음성의 전사 초안만 반환하며 추천 요청은 실행하지 않는다."""
     data = audio.file.read(MAX_AUDIO_BYTES + 1)
@@ -38,6 +41,7 @@ def transcribe_audio(audio: UploadFile) -> str:
         )
         response.raise_for_status()
         payload = response.json()
+        record_usage(payload.get("usage") if isinstance(payload, dict) else None, model)
     except (httpx.HTTPError, ValueError):
         raise _unavailable() from None
     if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):

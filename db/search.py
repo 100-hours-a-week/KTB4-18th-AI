@@ -65,42 +65,31 @@ def search(
     else:
         dist = column.cosine_distance(l2norm(np.asarray(qvec, dtype=np.float32)))
 
-    def candidates(genre_filter: list[str] | None) -> list[Hit]:
-        stmt = (
-            select(TrackRow, dist.label("dist"))
-            # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
-            # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
-            # 채워질 때까지 검색 대상에서 뺀다.
-            # 검색 칸이 NULL인 곡(아직 임베딩·v4 계산이 안 된 대기열)은 검색 대상에서 뺀다.
-            .where(column.isnot(None), TrackRow.store_url.isnot(None))
-            .order_by(dist)
-            .limit(n)
-        )
-        if exclude_ids:
-            stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
-        if min_year:
-            stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
-        if max_year:
-            stmt = stmt.where(TrackRow.release_date <= date(max_year, 12, 31))
-        if genre_filter:
-            stmt = stmt.where(TrackRow.genre.in_(genre_filter))
-        # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지. v4는 음의 내적이라 부호만 뒤집는다
-        rows = session.execute(stmt).all()
-        if space == "v4":
-            return [Hit(track=r[0], score=-float(r[1])) for r in rows]
-        return [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
-
-    hits = _dedup(candidates(genres), k)
-
-    # NOTE: 장르(genre 칸, 예: "Singer/Songwriter"는 iTunes 장르명)는 LLM이 "발라드"처럼
-    # 목록에 없는 표현을 가장 비슷해 보이는 장르로 추측해 고르기도 하고, 정당한 장르여도
-    # 연도 등 다른 조건과 겹치면 후보가 거의 안 남는다(2014년 이전 + Singer/Songwriter = 1곡).
-    # k곡이 안 되면 장르만 빼고 다시 찾아 남은 자리를 채운다. 장르가 맞는 곡이 앞에 오고,
-    # 사용자가 직접 말한 연도 조건은 풀지 않는다.
-    if genres and len(hits) < k:
-        picked = {hit.track.track_id for hit in hits}
-        extra = [hit for hit in candidates(None) if hit.track.track_id not in picked]
-        hits = _dedup(hits + extra, k)
+    stmt = (
+        select(TrackRow, dist.label("dist"))
+        # NOTE: store_url은 backfill 배치가 채우기 전까지 비어 있을 수 있다.
+        # 스키마상으로는 선택 필드이지만, 구매 링크 없는 곡을 추천하지 않도록
+        # 채워질 때까지 검색 대상에서 뺀다.
+        # 검색 칸이 NULL인 곡(아직 임베딩·v4 계산이 안 된 대기열)은 검색 대상에서 뺀다.
+        .where(column.isnot(None), TrackRow.store_url.isnot(None))
+        .order_by(dist)
+        .limit(n)
+    )
+    if exclude_ids:
+        stmt = stmt.where(TrackRow.track_id.notin_(exclude_ids))
+    if min_year:
+        stmt = stmt.where(TrackRow.release_date >= date(min_year, 1, 1))
+    if max_year:
+        stmt = stmt.where(TrackRow.release_date <= date(max_year, 12, 31))
+    if genres:
+        stmt = stmt.where(TrackRow.genre.in_(genres))
+    # NOTE: cosine distance랑 similarity가 반대되는 개념임을 인지. v4는 음의 내적이라 부호만 뒤집는다
+    rows = session.execute(stmt).all()
+    if space == "v4":
+        hits = [Hit(track=r[0], score=-float(r[1])) for r in rows]
+    else:
+        hits = [Hit(track=r[0], score=1.0 - float(r[1])) for r in rows]
+    hits = _dedup(hits, k)
 
     tracks = [
         Track(
@@ -116,18 +105,42 @@ def search(
     return tracks
 
 
+def track_vectors(session: Session, track_ids: list[str], space: str = "gemini") -> dict[str, np.ndarray]:
+    """검색 공간의 곡 벡터. 검색어 벡터와 내적하면 search()의 점수와 같은 값이 나오게 돌려준다.
+
+    space="v4": emb_v4 그대로. 마지막 칸의 허브 보정(−β·r(s))이 길이에 들어 있어 정규화하지 않는다
+    space="gemini": emb_gemini를 정규화. 정규화한 검색어와 내적하면 코사인이다
+    """
+
+    column = search_column(space)
+    rows = session.execute(
+        select(TrackRow.track_id, column).where(TrackRow.track_id.in_([int(i) for i in track_ids]))
+    ).all()
+    vectors = {str(track_id): np.asarray(vec, dtype=np.float32) for track_id, vec in rows}
+    if space == "v4":
+        return vectors
+    return {track_id: l2norm(vec) for track_id, vec in vectors.items()}
+
+
 def lookup(
     session: Session,
     song_title: str = None,
     artist: str = None,
     limit: int = 5,
     exclude_ids: set[int] = None,
+    seed_artist: str = None,
 ) -> list[TrackRow]:
-    """제목/아티스트 텍스트로 곡을 조회한다."""
+    """제목/아티스트 텍스트로 곡을 조회한다.
+
+    seed_artist는 고속 모드에서 Jev가 seed_artists() 목록 중 고른 값이다. 실제 artist
+    표기와 다를 수 있어서(seed "Baek Yerin" / 곡 "Yerin Baek") 정확히 같은 값으로 찾는다.
+    """
 
     stmt = select(TrackRow)
     if song_title:
         stmt = stmt.where(TrackRow.title.ilike(f"%{song_title}%"))
+    if seed_artist:
+        stmt = stmt.where(TrackRow.seed_artist == seed_artist)
     if artist:
         # NOTE: ilike(%artist%)는 짧은 아티스트명(예: "IU")이 "XIUMIN", "genius" 같은
         # 무관한 단어 안에 우연히 포함돼 걸리는 문제가 있어, 단어 경계(\y) 정규식으로 매칭한다.
@@ -189,5 +202,27 @@ def known_genres(session: Session, space: str = "gemini") -> list[str]:
         )
         .group_by(TrackRow.genre)
         .having(func.count() >= MIN_GENRE_TRACKS)
+    ).scalars().all()
+    return sorted(rows)
+
+
+def seed_artists(session: Session) -> list[str]:
+    """카탈로그를 모을 때 기준으로 삼은 아티스트 목록(정렬).
+
+    NOTE: 피처링 표기까지 합친 실제 artist 값은 2,700개가 넘어 Jev Choice(최대 255개)에
+    안 들어가지만, seed는 250명 정도라 한 번에 고를 수 있다.
+    """
+
+    rows = session.execute(
+        select(TrackRow.seed_artist).where(TrackRow.seed_artist.isnot(None)).distinct()
+    ).scalars().all()
+    return sorted(rows)
+
+
+def seed_artist_titles(session: Session, seed_artist: str) -> list[str]:
+    """seed 아티스트의 곡 제목 목록(중복 제거, 정렬)."""
+
+    rows = session.execute(
+        select(TrackRow.title).where(TrackRow.seed_artist == seed_artist).distinct()
     ).scalars().all()
     return sorted(rows)

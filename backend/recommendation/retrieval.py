@@ -1,16 +1,21 @@
 """추천·조회 DB 연결."""
 
 from db.types import Track
+from langsmith import traceable
 from backend.core.errors import _catalog_unavailable
 from backend.recommendation.adapter import search_space, to_v4_query
+from backend.recommendation.counts import DEFAULT_TRACK_COUNT
 
 
+@traceable(name="음악 벡터 검색", run_type="retriever",
+           process_inputs=lambda values: {k: v for k, v in values.items() if k != "qvec"})
 def vector_recommendation(
     qvec: list[float],
     exclude_ids: set[int] = None,
     genres: list[str] = None,
     min_year: int = None,
     max_year: int = None,
+    k: int = DEFAULT_TRACK_COUNT,
 ) -> list[Track]:
     """pgvector 검색 결과의 추천곡을 가져온다. SEARCH_EMBEDDING=v4면 검색어를 v4 공간으로 바꿔 찾는다."""
 
@@ -27,7 +32,7 @@ def vector_recommendation(
         with SessionLocal() as session:
             tracks = vector_search(
                 session, qvec, exclude_ids=exclude_ids, genres=genres,
-                min_year=min_year, max_year=max_year, space=space,
+                min_year=min_year, max_year=max_year, space=space, k=k,
             )
     except Exception as error:
         raise _catalog_unavailable() from error
@@ -35,7 +40,27 @@ def vector_recommendation(
     return tracks
 
 
-def lookup_tracks_db(song_title: str = None, artist: str = None, exclude_ids: set[int] = None) -> list:
+def candidate_pools_db(queries: list, space: str, k: int) -> tuple[list[list[Track]], dict]:
+    """검색어마다 후보 k곡과, 후보 곡 전체의 벡터(검색어 벡터와 내적하면 검색 점수). queries는 이미 space로 바꾼 벡터다."""
+
+    try:
+        from db.models import SessionLocal
+        from db.search import search as vector_search, track_vectors
+
+        with SessionLocal() as session:
+            pools = [vector_search(session, q, space=space, k=k) for q in queries]
+            vectors = track_vectors(session, list({t.track_id for pool in pools for t in pool}), space)
+    except Exception as error:
+        raise _catalog_unavailable() from error
+
+    return pools, vectors
+
+
+@traceable(name="곡·아티스트 조회", run_type="retriever")
+def lookup_tracks_db(
+    song_title: str = None, artist: str = None, exclude_ids: set[int] = None,
+    limit: int = DEFAULT_TRACK_COUNT, seed_artist: str = None,
+) -> list:
     """제목/아티스트로 DB에서 곡을 조회한다."""
 
     try:
@@ -43,6 +68,33 @@ def lookup_tracks_db(song_title: str = None, artist: str = None, exclude_ids: se
         from db.search import lookup as db_lookup
 
         with SessionLocal() as session:
-            return db_lookup(session, song_title=song_title, artist=artist, exclude_ids=exclude_ids)
+            return db_lookup(session, song_title=song_title, artist=artist, exclude_ids=exclude_ids, limit=limit,
+                             seed_artist=seed_artist)
+    except Exception as error:
+        raise _catalog_unavailable() from error
+
+
+def seed_artists_db() -> list[str]:
+    """고속 모드 Jev가 고를 seed 아티스트 목록을 가져온다."""
+
+    try:
+        from db.models import SessionLocal
+        from db.search import seed_artists
+
+        with SessionLocal() as session:
+            return seed_artists(session)
+    except Exception as error:
+        raise _catalog_unavailable() from error
+
+
+def seed_artist_titles_db(seed_artist: str) -> list[str]:
+    """seed 아티스트의 곡 제목 목록을 가져온다."""
+
+    try:
+        from db.models import SessionLocal
+        from db.search import seed_artist_titles
+
+        with SessionLocal() as session:
+            return seed_artist_titles(session, seed_artist)
     except Exception as error:
         raise _catalog_unavailable() from error

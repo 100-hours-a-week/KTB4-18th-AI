@@ -1,0 +1,496 @@
+"""장소·날씨 원본 응답을 LocationContext로 바꾸는 규칙.
+
+외부 호출은 하지 않는다. 입력은 각 API의 응답을 그대로 받는다.
+임계값은 scripts/location/probe_*.py로 받은 한국 좌표 7곳 결과를 보고 정했다.
+"""
+
+from datetime import datetime
+
+from backend.location.schemas import (
+    Density, LocationContext, Nature, NatureHit, PlaceSummary, Provider, TimeOfDay, WeatherSummary,
+)
+
+MAX_TRAITS = 5
+
+# 자연 지형을 그 장소의 특징으로 인정하는 거리(m). 붐빌수록 건물에 가려 덜 보인다고 보고 줄인다.
+# 산은 멀리서도 보여서 한적한 곳에서는 넓게 잡는다.
+# 예: 해리단길(busy)에서 약 800m 떨어진 해운대 해변은 인정하지 않는다
+NATURE_RADIUS_M: dict[Nature, dict[str, int]] = {
+    "sea":      {"quiet": 500, "moderate": 300, "busy": 150},
+    # 강·호수는 수면이 넓게 트여 있고 등록된 점이 수면 한가운데라 바다보다 넓게 잡는다 (예: 석촌호수 동호 314m)
+    "river":    {"quiet": 500, "moderate": 400, "busy": 350},
+    # 계곡·개울은 폭이 좁아 가까이 있어야 보인다
+    "stream":   {"quiet": 300, "moderate": 200, "busy": 150},
+    "forest":   {"quiet": 300, "moderate": 200, "busy": 100},
+    "park":     {"quiet": 300, "moderate": 200, "busy": 100},
+    "mountain": {"quiet": 1000, "moderate": 1000, "busy": 300},
+}
+
+# ── 카카오 ──────────────────────────────────────────────
+# 밀도: 반경 500m의 음식점(FD6)+카페(CE7)+편의점(CS2) 전체 개수
+# 측정값: 강남역 1076 · 해운대 367 · 여의도 205 · 경포 72 · 평창읍 66 · 북한산 0 · 김제평야 0
+# busy 하한은 처음 80이었는데, 정부세종청사 87·성산일출봉 117이 체감은 moderate라 150으로 올렸다
+KAKAO_DENSITY_CODES = ("FD6", "CE7", "CS2")
+KAKAO_DENSITY_LEVELS = ((10, "quiet"), (150, "moderate"), (500, "busy"))
+
+# 관광명소(AT4) category_name의 마지막 단계에 이 단어가 들어 있으면 자연 지형으로 본다
+# 위에서부터 먼저 맞는 것을 쓴다. "산림욕장"이 mountain에 걸리지 않도록 forest를 먼저 둔다
+# "섬"은 바다 섬(동백섬)과 강 섬(여의도)이 섞여 있어 지형이 아니라 특징으로 받고, build_context에서 바다와 함께일 때만 남긴다
+KAKAO_NATURE_WORDS: dict[Nature, tuple[str, ...]] = {
+    "sea": ("해수욕장", "해변"),
+    "forest": ("숲", "휴양림", "수목원", "산림욕장"),
+    # 한국 국립공원은 대부분 산이라 park보다 먼저 mountain으로 본다 (예: 월악산국립공원 덕주지구)
+    "mountain": ("산", "봉우리", "오름", "능선", "국립공원"),
+    "stream": ("계곡", "폭포"),
+    "river": ("호수", "강", "저수지"),
+    "park": ("공원",),
+}
+
+SEA_PARK_WORDS = ("해상", "해안")
+
+# 특징은 검색어에 들어갈 단어라 가까운 것만 쓴다. 2km 개수 순이면 판교에 "테마파크", 잠실대교 위에 "먹자골목"이 붙었다
+TRAIT_NEAR_M = 500
+# 그 안에 있을 때만 특징으로 보는 장소(시장, 전망대)의 거리. 붐비는 곳의 공원·숲 반경과 같다.
+# 전망대: 35곳 중 위에 있던 곳은 서울스카이 14m뿐이고 "근처 전망대"는 158m부터였다(인천공항 비선루).
+# 높은 건물 안은 GPS가 수십 m 틀어지고 롯데월드타워 한 변이 70m 남짓이라 50m는 좁다
+INSIDE_NEAR_M = NATURE_RADIUS_M["park"]["busy"]
+# 관광명소 분류 중 그 안에 있을 때만 특징으로 보는 것. 이름(landmark) 후보로는 TRAIT_NEAR_M까지 쓴다
+KAKAO_INSIDE_TRAITS = ("전망대",)
+# 공방이 관광명소로 등록된 "도자기,도예촌"은 분위기 단어로 쓰지 않는다
+KAKAO_TRAIT_NOISE = ("도자기,도예촌",)
+# 카카오는 도심 실내 놀이시설(키즈카페·체험관)도 테마파크로 분류하고 크기를 주지 않는다. 상권이 작은 곳에서만 인정하고
+# OSM이 있으면 면적으로 다시 받는다 (예: 홍대 스머프 매직 포레스트·대구 크레이지팡팡은 빠지고, 롯데월드는 OSM으로 남는다)
+KAKAO_VENUE_TRAITS = ("테마파크", "워터테마파크", "동물원")
+VENUE_DENSITIES = ("quiet", "moderate")
+ISLAND_TRAITS = ("섬", "섬(내륙)")
+# 이름(landmark)은 사람들이 "여기가 거기구나" 할 곳이어야 한다. 걷기 코스(도보여행 > 둘레길·해파랑길 등)는 길이고,
+# 실내동물원은 가게(예: 세븐테마 카페)라 특징으로만 쓰고 이름으로는 쓰지 않는다.
+# 걷기 코스는 "<지역> <코스명>"이라 끝 덩어리를 떼면 "경주 황리단길" → "경주"처럼 지역명만 남기도 한다
+KAKAO_NOT_LANDMARK = ("도보여행", "실내동물원")
+
+# 시설(sources.FACILITY_QUERIES 결과): 검색어 → (그 시설이 맞을 때의 카카오 분류 앞부분, 특징으로 인정하는 거리 m)
+# 키워드 검색은 이름에 그 말만 들어가도 나와서 분류로 거른다 (예: "공항" → 범계공항리무진버스정류소·컴포즈커피 범계공항터미널점)
+# 시장은 도심 곳곳에 있고 경계가 뚜렷해 안에 있을 때만 특징으로 본다(INSIDE_NEAR_M)
+# 스키장은 슬로프가 수 km라 산 반경(1000m)과 같게 둔다 (예: 하이원리조트 점에서 북쪽 300m만 가도 500m 안 항목이 없었다)
+FACILITIES: dict[str, tuple[str, int]] = {
+    "공항": ("교통,수송 > 교통시설 > 공항", TRAIT_NEAR_M),
+    "기차역": ("교통,수송 > 기차,철도 > 기차역", TRAIT_NEAR_M),
+    "프로야구장": ("스포츠,레저 > 야구 > 야구장 > 프로야구장", TRAIT_NEAR_M),
+    "종합운동장": ("스포츠,레저 > 스포츠시설 > 운동장 > 종합운동장", TRAIT_NEAR_M),
+    "스키장": ("스포츠,레저 > 스키,스노우보드 > 스키장", NATURE_RADIUS_M["mountain"]["quiet"]),
+    "시장": ("가정,생활 > 시장", INSIDE_NEAR_M),
+}
+# 학교(SC4)는 특징으로 쓰지 않고 이름만 쓴다. 학과 단위 항목("연세대학교 생명시스템대학 생화학과")이 있어 첫 단어만 쓴다
+UNIVERSITY_CATEGORY = "교육,학문 > 학교 > 대학교"
+
+
+def _facilities(facilities: dict[str, list[dict]]) -> tuple[list[str], dict[str, str]]:
+    """시설 특징(인정 거리 안, 가까운 순)과 이름 묶음별 가장 가까운 이름(500m 또는 그보다 넓은 인정 거리 안).
+    이름 묶음: "major"(공항·기차역·경기장·스키장, 드물고 대표성이 큼), "시장", "대학교"(도심 곳곳에 있어 뒤 순서)"""
+    found = []  # (거리, 특징 또는 None, 이름 묶음, 이름)
+    for query, (category, near_m) in FACILITIES.items():
+        group = "시장" if query == "시장" else "major"
+        for doc in facilities.get(query, []):
+            distance = int(doc["distance"])
+            if doc["category_name"].startswith(category) and distance <= max(near_m, TRAIT_NEAR_M):
+                found.append((distance, query if distance <= near_m else None, group, _kakao_name(doc)))
+    for doc in facilities.get("학교", []):
+        if doc["category_name"].startswith(UNIVERSITY_CATEGORY) and int(doc["distance"]) <= TRAIT_NEAR_M:
+            found.append((int(doc["distance"]), None, "대학교", doc["place_name"].split()[0]))
+
+    found.sort(key=lambda item: item[0])
+    traits = list(dict.fromkeys(trait for _, trait, _, _ in found if trait))
+    names = {}
+    for _, _, group, name in found:
+        names.setdefault(group, name)
+    return traits, names
+
+# "공원" 키워드 결과 중 동네마다 있는 작은 공원은 장소의 특징으로 보지 않는다 (예: 신촌 바람산어린이공원)
+KAKAO_SMALL_PARK_WORDS = ("어린이공원", "마을마당", "소공원")
+# 강·호수는 점이 없거나 수면 한가운데 한 점이라 거리가 부정확하다.
+# 이름에 이 단어가 있는 장소는 분류와 관계없이(진출입로·화장실 포함) 물가로 본다 (예: 한강공원잠실대교북단 진출입로)
+KAKAO_WATERSIDE_WORDS = ("한강", "호수", "강변", "천변")
+
+# ── Google ─────────────────────────────────────────────
+# 밀도: 반경 500m 거리순 20개 중 가장 먼 장소까지의 거리. 20개가 안 차면 한적한 곳
+# 측정값: 강남역 13m · 평창읍 57m · 해운대 66m · 여의도 162m · 경포 164m · 북한산 18개
+GOOGLE_DENSITY_LEVELS = ((30, "very_busy"), (100, "busy"), (300, "moderate"))
+
+# 사용자 등록 잡음이 적은 유형은 1개만 있어도 인정한다
+GOOGLE_RELIABLE_TYPES: dict[str, Nature] = {
+    "beach": "sea",
+    "mountain_peak": "mountain",
+    "woods": "forest",
+    "lake": "river",
+}
+# 강남역에서 회사·식당이 park로, 온천이 river로 등록된 사례가 있어 이름도 같이 확인한다
+GOOGLE_NOISY_TYPES: dict[str, tuple[Nature, tuple[str, ...]]] = {
+    "park": ("park", ("공원", "park")),
+    "city_park": ("park", ("공원", "park")),
+    "national_park": ("mountain", ("국립공원", "national park")),
+    "state_park": ("park", ("공원", "park")),
+    "river": ("river", ("강", "하천", "river")),
+    "hiking_area": ("mountain", ("산", "둘레길", "등산")),
+    "nature_preserve": ("forest", ("숲", "산", "봉")),
+}
+
+
+def _level(value, levels, default):
+    """levels의 (상한, 등급) 중 value가 처음으로 들어가는 등급"""
+    for limit, name in levels:
+        if value < limit:
+            return name
+    return default
+
+
+def _visible_nature(
+    hits: list[tuple[Nature, int, str | None]], density: Density, radius=NATURE_RADIUS_M,
+) -> list[NatureHit]:
+    """(종류, 거리, 이름) 목록 중 밀도별 인정 거리 안에 있는 것만, 종류별 가장 가까운 것 하나씩 가까운 순으로"""
+    level = "busy" if density == "very_busy" else density
+    nearest: dict[Nature, NatureHit] = {}
+    for kind, distance, name in hits:
+        if distance <= radius[kind][level] and (kind not in nearest or distance < nearest[kind].distance_m):
+            nearest[kind] = NatureHit(kind=kind, distance_m=distance, name=name)
+    return sorted(nearest.values(), key=lambda hit: hit.distance_m)
+
+
+def _kakao_name(doc: dict) -> str:
+    """카카오 장소 이름을 사용자 문장에 쓸 장소 이름으로 줄인다. 카카오 이름은 대개 "<장소> <시설·구간>"이다.
+    - 가게 지점: 끝 덩어리의 "점"만 뺀다. "투썸플레이스 세종호수공원점" → "세종호수공원"
+    - 그 밖: 끝 덩어리를 뺀다. "망원한강공원 배달존" → "망원한강공원", "경주역사유적지구 대릉원지구" → "경주역사유적지구"
+    - 한 덩어리면 그대로 둔다("롯데백화점"이 "롯데백화"가 되지 않게)"""
+    parts = doc["place_name"].split()
+    if len(parts) == 1:
+        return parts[0]
+    if _is_branch(parts[-1], doc["category_name"]):
+        return parts[-1][:-1]
+    return " ".join(parts[:-1])
+
+
+# 가게 분류는 음식점·가정,생활·서비스,산업·스포츠,레저 등에 흩어져 있어 반대로 지점이 아닌 "점"이 나오는 분류를 고른다
+# (예: "한양도성 순성길 조망점"은 여행 > 전망대, "관악산 호수공원분기점"은 스포츠,레저 > 등산 > 등산정보)
+KAKAO_NOT_BRANCH_CATEGORIES = ("여행", "스포츠,레저 > 등산")
+
+
+def _is_branch(last: str, category: str) -> bool:
+    """끝 덩어리가 가게 지점 이름인가. "의암공원 매점"처럼 "점"을 빼면 한 글자만 남는 단어는 지점이 아니다"""
+    return last.endswith("점") and len(last) > 2 and not category.startswith(KAKAO_NOT_BRANCH_CATEGORIES)
+
+
+def summarize_kakao(
+    region: str | None, density: dict[str, dict], attractions: list[dict], parks: list[dict],
+    facilities: dict[str, list[dict]] | None = None,
+) -> PlaceSummary:
+    """density: 카테고리 코드별 카테고리 검색 응답(500m), attractions: AT4 문서 목록(2km, 거리순),
+    parks: "공원" 키워드 검색 문서 목록(500m), facilities: 시설 검색어·"학교"별 문서 목록(500m)"""
+    count = sum(density[code]["meta"]["total_count"] for code in KAKAO_DENSITY_CODES)
+    level = _level(count, KAKAO_DENSITY_LEVELS, "very_busy")
+
+    hits, traits, attraction = [], [], None
+    for doc in attractions:
+        kind = doc["category_name"].split(" > ")[-1]
+        tag = next((t for t, words in KAKAO_NATURE_WORDS.items() if any(w in kind for w in words)), None)
+        # 바다 국립공원(한려해상·태안해안 등)은 산이 아니다
+        if tag == "mountain" and any(w in doc["place_name"] for w in SEA_PARK_WORDS):
+            tag = "sea"
+        if tag is None:
+            if kind in KAKAO_VENUE_TRAITS and level not in VENUE_DENSITIES:
+                continue
+            distance = int(doc["distance"])
+            if distance <= TRAIT_NEAR_M and kind not in KAKAO_TRAIT_NOISE:
+                if kind not in KAKAO_INSIDE_TRAITS or distance <= INSIDE_NEAR_M:
+                    traits.append(kind)  # attractions가 거리순이라 가까운 순으로 쌓인다
+                if not any(word in doc["category_name"] for word in KAKAO_NOT_LANDMARK):
+                    attraction = attraction or _kakao_name(doc)
+        else:
+            hits.append((tag, int(doc["distance"]), _kakao_name(doc)))
+
+    for doc in parks:
+        name, distance = doc["place_name"], int(doc["distance"])
+        if any(w in name for w in KAKAO_WATERSIDE_WORDS):
+            # "한강공원잠실대교북단상류측계단 진출입로"는 끝을 빼도 길게 남아서 한강은 강 이름만 쓴다
+            hits.append(("river", distance, "한강" if "한강" in name else _kakao_name(doc)))
+        # "여행 > 공원", "여행 > 공원시설물"만 인정한다. "OO공원점" 같은 음식점·카페는 분류에서 걸러진다
+        if doc["category_name"].startswith("여행 > 공원") and not any(w in name for w in KAKAO_SMALL_PARK_WORDS):
+            hits.append(("park", distance, _kakao_name(doc)))
+
+    # 이름 후보는 묶음별로 모아 두고, 순서는 지형까지 확정된 뒤 _landmark가 정한다
+    facility_traits, names = _facilities(facilities or {})
+    stations = density.get("SW8", {}).get("documents", [])
+    if attraction:
+        names["attraction"] = attraction
+    if stations:
+        names["station"] = stations[0]["place_name"].split()[0]  # "범계역 4호선"에서 노선은 뗀다
+
+    return PlaceSummary(
+        region=region,
+        density=level,
+        nature=_visible_nature(hits, level),
+        # 시설은 관광명소에 없는 종류라 앞에 둔다(MAX_TRAITS에 밀려 잘리지 않게)
+        place_traits=list(dict.fromkeys(facility_traits + traits))[:MAX_TRAITS],
+        names=names,
+    )
+
+
+def _google_nature_tag(place: dict) -> Nature | None:
+    ptype = place.get("primaryType")
+    if ptype in GOOGLE_RELIABLE_TYPES:
+        return GOOGLE_RELIABLE_TYPES[ptype]
+    if ptype in GOOGLE_NOISY_TYPES:
+        tag, words = GOOGLE_NOISY_TYPES[ptype]
+        name = place["displayName"]["text"].lower()
+        return tag if any(w in name for w in words) else None
+    return None
+
+
+def summarize_google(dense: list[dict], nature_places: list[dict]) -> PlaceSummary:
+    """dense: 500m 거리순 검색, nature_places: 자연 유형 2km 검색. 둘 다 distance_m이 붙은 장소 목록"""
+    if len(dense) < 20:
+        density = "quiet"
+    else:
+        density = _level(dense[-1]["distance_m"], GOOGLE_DENSITY_LEVELS, "quiet")
+
+    hits = [
+        (tag, p["distance_m"], p["displayName"]["text"])
+        for p in nature_places if (tag := _google_nature_tag(p)) is not None
+    ]
+
+    return PlaceSummary(
+        region=None,  # Google은 지역명을 받지 않는다. 필요하면 카카오 행정동 조회를 붙인다
+        density=density,
+        nature=_visible_nature(hits, density),
+        # 가까운 순으로 옷가게·보험사 같은 가게 유형이 먼저 잡혀 분위기 신호로 약하다. 비교용이라 비워 둔다
+        place_traits=[],
+    )
+
+
+# ── OSM ───────────────────────────────────────────────
+# 입력은 osm.measure가 잰 값(종류별 가까운 지형 목록)에 서비스가 고도 기복(relief)을 더한 것이다.
+# 밀도는 OSM으로 잴 수 없어 카카오 값을 받는다.
+
+# 연못·하수처리장·배수로 등은 강·호수로 보지 않는다 (예: 화랑공원 생태호수)
+OSM_SMALL_WATER = {"pond", "wastewater", "basin", "ditch", "fishpond", "drain", "reflecting_pool", "moat"}
+# 동네 녹지·조경 연못은 장소의 특징으로 보지 않는다. 선(강 중심선·개울)은 면적이 0이라 거르지 않는다
+# 측정값: 역삼공원 0.5ha · 오금공원 20.6ha · 방이동백제고분군 4.2ha · 잠실새내역 이름 없는 수면 70㎡ · 석촌호수 14.6ha
+OSM_MIN_AREA_M2 = {"park": 20_000, "forest": 100_000, "river": 10_000}
+# 주변 ±1km 최고·최저 고도 차이가 이 이상일 때만 산으로 본다. 근처 봉우리 유무는 보지 않는다
+# 측정값: 남한산성 312 · 송계계곡 434 / 해리단길 165 · 한남동 120 · 판교 80 · 서강대 87
+MOUNTAIN_MIN_RELIEF_M = 250
+# OSM은 실제 물가까지 재므로, 카카오의 수면 중심점 때문에 넓혔던 강·호수 거리를 바다와 같게 되돌린다
+# 예: 방이맛골 → 석촌호수 278m는 빼고, 롯데월드타워 150m·체스터톤스 → 청초호 136m는 남긴다
+OSM_NATURE_RADIUS_M = {**NATURE_RADIUS_M, "river": NATURE_RADIUS_M["sea"]}
+# 지형이 아니라 특징(place_traits)으로 넘기는 OSM 시설. 이름은 카카오 분류 이름에 맞춘다
+OSM_VENUES = {"theme_park": "테마파크", "water_park": "워터테마파크", "zoo": "동물원"}
+# 공원과 같은 기준. 롯데월드 4.0만㎡는 남고, zoo로 태그된 동물병원(21㎡)·동네 물놀이장(수백 ㎡)은 빠진다
+OSM_VENUE_MIN_AREA_M2 = OSM_MIN_AREA_M2["park"]
+# 대학 캠퍼스는 이름(landmark)으로만 쓴다. 카카오는 점만 줘서 작은 분교도 같은 "대학교"인데(담양 죽녹원에서 416m 떨어진
+# 목포대 담양캠퍼스가 이름이 됐다), OSM 면적이 이 이상인 캠퍼스 안(또는 바로 옆)이면 대표 시설 다음 순서로 둔다.
+# 측정값: 서울대 관악 135만㎡ · 연세대 신촌 74만 · 서강대 20만 · 홍익대 서울 9.3만 / 연세대 원주의과대학 3만 · 목포대 남악 2.7만
+OSM_CAMPUS_MIN_AREA_M2 = 50_000
+# 지형이 아니라 특징·이름으로만 쓰는 OSM 종류
+OSM_NOT_NATURE = (*OSM_VENUES, "university")
+
+# 산 이름. 틀린 이름(서울대에서 "돌산")은 없느니만 못해서 확실할 때만 붙인다
+PROTECTED_SUFFIXES = ("국립공원", "도립공원", "군립공원")
+PEAK_NEAR_M = 200  # 이 안의 봉우리면 그 봉우리 위에 있다고 본다 (예: 북한산 백운대 21m)
+# 봉우리 점수 = 거리 ÷ (봉우리 높이 − 주변 최저 고도)^1.5. 높이 솟은 산일수록 멀리서도 그 산 영향권으로 본다
+# 측정값: 남한산성 → 청량산 0.074 · 서울대 → 관악산 0.141 (우정봉 0.354)
+PEAK_SCORE_MAX = 0.2
+
+
+DENSITY_ORDER: tuple[Density, ...] = ("quiet", "moderate", "busy", "very_busy")
+
+
+def adjust_density_in_park(density: Density, measure: dict) -> Density:
+    """넓은 공원 안에 있고 busy 이상이면 한 단계 한산하게 본다.
+
+    500m 반경 개수에는 공원 밖 상권이 섞인다. 공원 안에서는 덜 붐비게 느껴진다
+    (예: 경주 대릉원 395개 busy → moderate, 여수 이순신광장 323개 busy → moderate)
+    섞일 상권이 적은 moderate 이하는 낮추지 않는다 (예: 춘천 공지천 36개는 moderate 유지)
+    """
+    parks = measure["nearest"].get("park", [])
+    inside = any(p["distance_m"] == 0 and p["area_m2"] >= OSM_MIN_AREA_M2["park"] for p in parks)
+    if not inside or density not in ("busy", "very_busy"):
+        return density
+    return DENSITY_ORDER[DENSITY_ORDER.index(density) - 1]
+
+
+def _mountain_name(measure: dict) -> str | None:
+    """1) 국립·도립공원 구역 안 2) 200m 안 봉우리 3) 봉우리 점수가 기준 이하인 산. 다 아니면 None"""
+    for park in measure["protected"]:
+        if any(w in park for w in SEA_PARK_WORDS):
+            continue
+        name = park.replace(" ", "")
+        for suffix in PROTECTED_SUFFIXES:
+            name = name.removesuffix(suffix)
+        # "경주 국립공원" 같은 역사 공원은 산 이름이 아니다
+        if "산" in name:
+            return name
+
+    peaks = measure["peaks"]
+    near = [p for p in peaks if p["distance_m"] <= PEAK_NEAR_M]
+    if near:
+        return min(near, key=lambda p: p["distance_m"])["name"]
+
+    base = measure["relief"]["min_m"]
+    scored = [(p["distance_m"] / (p["ele"] - base) ** 1.5, p["name"]) for p in peaks if p["ele"] > base]
+    if scored and min(scored)[0] <= PEAK_SCORE_MAX:
+        return min(scored)[1]
+    return None
+
+
+def summarize_osm_nature(measure: dict, density: Density) -> list[NatureHit]:
+    hits = []
+    for kind, items in measure["nearest"].items():
+        if kind == "mountain" or kind in OSM_NOT_NATURE:
+            continue
+        for item in items:
+            # 수면(natural=water)으로 그려진 개울은 stream으로 옮긴다 (예: 판교 운중천 쪽 water=stream)
+            tag = "stream" if kind == "river" and item["sub"] == "stream" else kind
+            if tag == "river" and item["sub"] in OSM_SMALL_WATER:
+                continue
+            if item["area_m2"] and item["area_m2"] < OSM_MIN_AREA_M2.get(tag, 0):
+                continue
+            hits.append((tag, item["distance_m"], item["name"]))
+    nature = _visible_nature(hits, density, OSM_NATURE_RADIUS_M)
+
+    # 산은 거리 대신 기복으로 판정한다. 거리는 참고용으로 가장 가까운 봉우리까지
+    # 고도 API가 실패하면 relief가 None이고, 산 판정만 건너뛴다
+    relief = measure.get("relief")
+    if relief and relief["relief_m"] >= MOUNTAIN_MIN_RELIEF_M:
+        peaks = measure["nearest"].get("mountain", [])
+        distance = peaks[0]["distance_m"] if peaks else 0
+        nature.append(NatureHit(kind="mountain", distance_m=distance, name=_mountain_name(measure)))
+
+    # OSM 개울(stream)에는 도심 하천(판교 운중천, 정부세종청사 근처)도 들어 있어 산이 함께 잡힐 때만 계곡으로 본다
+    if all(hit.kind != "mountain" for hit in nature):
+        nature = [hit for hit in nature if hit.kind != "stream"]
+    return nature
+
+
+def combine_kakao_osm(kakao: PlaceSummary, measure: dict) -> PlaceSummary:
+    """판정은 OSM, 사람에게 보여줄 말(지역·이름·특징)은 카카오가 맡는다.
+
+    - 밀도: 카카오 개수 + OSM 공원 안 보정
+    - 자연: OSM. 바다만 카카오 해수욕장으로 보충한다(사람이 붙인 분류라 오탐이 거의 없다)
+    - 이름: 같은 종류를 카카오도 잡았으면 카카오 이름(한국어 장소명), 아니면 OSM 이름
+    - 특징: OSM 시설(테마파크 등, 면적 기준) + 카카오 관광 특징 + OSM 용도지역이 상업·공업이면 업무지구.
+      용도지역은 비어 있는 곳이 많아 있을 때만 쓴다
+    """
+    density = adjust_density_in_park(kakao.density, measure)
+    nature = summarize_osm_nature(measure, density)
+
+    kakao_by_kind = {hit.kind: hit for hit in kakao.nature}
+    if "sea" in kakao_by_kind and all(hit.kind != "sea" for hit in nature):
+        nature.append(kakao_by_kind["sea"])
+    # 산 이름은 카카오 "○○산"에 뒷동산이 섞여(서울대 → 돌산) OSM 규칙(_mountain_name)만 쓴다
+    nature = [
+        hit.model_copy(update={"name": kakao_by_kind[hit.kind].name})
+        if hit.kind != "mountain" and hit.kind in kakao_by_kind and kakao_by_kind[hit.kind].name else hit
+        for hit in nature
+    ]
+
+    # 면적 기준을 넘는 OSM 시설을 앞에 두고, OSM에 점으로만 있는 시설(울산대공원 등)은 카카오 특징으로 받는다
+    venues = [
+        word for kind, word in OSM_VENUES.items()
+        if any(i["distance_m"] <= TRAIT_NEAR_M and i["area_m2"] >= OSM_VENUE_MIN_AREA_M2
+               for i in measure["nearest"].get(kind, []))
+    ]
+    traits = list(dict.fromkeys(venues + kakao.place_traits))
+    names = dict(kakao.names)
+    campus = next((i["name"] for i in measure["nearest"].get("university", [])
+                   if i["name"] and i["distance_m"] <= INSIDE_NEAR_M and i["area_m2"] >= OSM_CAMPUS_MIN_AREA_M2), None)
+    if campus:
+        names["campus"] = campus.split()[0]  # "서울대학교 관악캠퍼스" → "서울대학교"
+    if {"commercial", "industrial"} & set(measure["landuse"]):
+        traits.insert(0, "업무지구")
+
+    return PlaceSummary(
+        region=kakao.region,
+        density=density,
+        nature=sorted(nature, key=lambda hit: hit.distance_m),
+        place_traits=traits[:MAX_TRAITS],
+        names=names,
+    )
+
+
+# WMO 날씨 코드 → 단순 분류. https://open-meteo.com/en/docs 의 WMO Weather interpretation codes
+def _weather_kind(code: int):
+    if code <= 1:
+        return "clear"
+    if code <= 3:
+        return "cloudy"
+    if code in (45, 48):
+        return "fog"
+    if 71 <= code <= 77 or code in (85, 86):
+        return "snow"
+    if code >= 95:
+        return "storm"
+    return "rain"
+
+
+def _time_of_day(now: datetime) -> TimeOfDay:
+    """시계 기준. 겨울에 18시면 어둡지만 사람들은 여름 저녁처럼 지내므로 해 뜨고 지는 시각은 보지 않는다"""
+    if now.hour < 6:
+        return "dawn"
+    if now.hour < 11:
+        return "morning"
+    if now.hour < 17:
+        return "afternoon"
+    if now.hour < 21:
+        return "evening"
+    return "night"
+
+
+def summarize_weather(forecast: dict) -> WeatherSummary:
+    """Open-Meteo 응답(current, 현지 시간대)"""
+    return WeatherSummary(
+        time_of_day=_time_of_day(datetime.fromisoformat(forecast["current"]["time"])),
+        weather=_weather_kind(forecast["current"]["weather_code"]),
+        temperature_c=forecast["current"]["temperature_2m"],
+    )
+
+
+def weather_unknown(now: datetime) -> WeatherSummary:
+    """날씨 API 실패 시. 시간대만 정하고 날씨는 비워 둔다"""
+    return WeatherSummary(time_of_day=_time_of_day(now), weather=None, temperature_c=None)
+
+
+# 이름 순서(35곳 결과를 보고 정함). 종류로 순서를 정하면 거리를 무시하게 되어, 노이즈가 많은 종류일수록 뒤에 둔다
+# - 대표 시설(공항·기차역·경기장·스키장)은 드물고 틀릴 일이 적어 맨 앞
+# - 바다·강·산 이름은 그 자체가 대표 이름이다. 관광명소보다 뒤면 해수욕장 근처 관광명소 노이즈가 이긴다
+#   (광안리 → "광안리해변테마거리"). 산 이름이 계곡·산성 자리에 나오는 것은 괜찮다(송계계곡 → 월악산)
+# - "~천"은 강이 아니라 하천이라 작은 지형이다(불광천, 설악산 앞 쌍천)
+# - 대학교는 관광명소 뒤. 작은 분교 캠퍼스가 많다(담양 죽녹원에서 416m 떨어진 목포대 담양캠퍼스가 이겼다)
+# - 지하철역은 작은 지형보다 앞(불광천보다 디지털미디어시티역), 시장은 도심 곳곳에 있어 맨 뒤
+#   (방이시장보다 방이동백제고분군)
+LANDMARK_BIG_NATURE = ("sea", "river", "mountain")
+
+
+def _is_big_nature(hit: NatureHit) -> bool:
+    return hit.kind in LANDMARK_BIG_NATURE and not (hit.kind == "river" and hit.name.endswith("천"))
+
+
+def _landmark(nature: list[NatureHit], names: dict[str, str]) -> str | None:
+    """대표 시설 → 큰 캠퍼스(OSM) → 큰 지형 → 관광명소 → 대학교(카카오) → 지하철역 → 작은 지형 → 시장.
+    종류마다 가장 가까운 것"""
+    named = [hit for hit in nature if hit.name]
+    big = next((hit.name for hit in named if _is_big_nature(hit)), None)
+    small = next((hit.name for hit in named if not _is_big_nature(hit)), None)
+    order = [names.get("major"), names.get("campus"), big, names.get("attraction"), names.get("대학교"),
+             names.get("station"), small, names.get("시장")]
+    return next((name for name in order if name), None)
+
+
+def build_context(provider: Provider, places: PlaceSummary, weather: WeatherSummary) -> LocationContext:
+    """지형까지 확정된 장소 요약으로 LLM 입력을 만든다. 카카오·OSM 어느 쪽이 판정했든 끝난 뒤라 여기서
+    - 섬은 바다 섬과 강 섬(여의도)이 섞여 있어 바다가 함께 잡힐 때만 남긴다
+    - 문장에 쓸 이름 하나를 지형 이름과 이름 후보를 섞어 고른다"""
+    traits = places.place_traits
+    if all(hit.kind != "sea" for hit in places.nature):
+        traits = [trait for trait in traits if trait not in ISLAND_TRAITS]
+    return LocationContext(
+        provider=provider, **places.model_dump(exclude={"place_traits", "names"}), place_traits=traits,
+        landmark=_landmark(places.nature, places.names), **weather.model_dump(),
+    )

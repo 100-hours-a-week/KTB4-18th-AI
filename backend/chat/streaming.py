@@ -5,13 +5,17 @@ import os
 from collections.abc import Iterator
 from typing import Any
 from openai import OpenAI
+from langsmith import traceable
 from db.types import Track
 from backend.chat.schemas import UserContext
+from backend.chat.graph.workflow import record_shown_tracks
+from backend.observability import record_usage, stream_result
 from backend.chat.answer import (
-    AnswerHints, answer_input, answer_instructions, lookup_answer_input, lookup_answer_instructions,
+    AnswerHints, answer_input, answer_instructions, count_notice,
+    lookup_answer_input, lookup_answer_instructions,
 )
 
-NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 조금 더 구체적인 질문과 함께 다시 요청해 주세요."
+NO_TRACKS_MESSAGE = "조건에 맞는 곡을 찾지 못했어요. 분위기·장르·연도 조건을 바꿔 다시 요청해 주세요."
 
 
 def sse(event: str, data: Any) -> str:
@@ -20,17 +24,50 @@ def sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+@traceable(name="고속 응답 전송", run_type="chain", reduce_fn=stream_result,
+           process_inputs=lambda values: {"text": values["text"], "track_count": len(values["tracks"])})
+def stream_fast_answer(
+    text: str,
+    tracks: list[Track],
+    hints: AnswerHints | None = None,
+    *,
+    thread_id: str | None = None,
+) -> Iterator[str]:
+    """고속 모드: LLM 답변 없이 고정 문구와 곡을 바로 전송한다.
+
+    NOTE: 명세상 text 이벤트가 반드시 와야 해서(없으면 Spring 쪽에서 오류), 고정
+    안내 문구처럼 문장 전체를 text 이벤트 하나에 담아 보낸다.
+    NOTE: stream_answer와 같이 카드를 보내는 시점에 보여준 곡을 기록한다. 기록해야 고속 모드의
+    "다른 곡으로 더 줘"(repeat)가 이미 보여준 곡을 빼고 찾는다.
+    NOTE: 곡 수 안내("한 번에 최대 5곡까지", "찾은 곡은 N곡")도 stream_answer와 같이 붙인다.
+    """
+
+    body = text if tracks else NO_TRACKS_MESSAGE
+    notice = count_notice(hints, len(tracks))
+    yield sse("text", {"delta": f"{body} {notice}" if notice else body})
+    cards = [track.model_dump() for track in tracks]
+    if thread_id:
+        record_shown_tracks(thread_id, cards)
+    yield sse("tracks", {"tracks": cards})
+    yield sse("done", {})
+
+
+@traceable(name="추천 안내 생성", run_type="llm", reduce_fn=stream_result,
+           process_inputs=lambda values: {"request": values["message"]})
 def stream_answer(
     client: OpenAI,
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
     hints: AnswerHints | None = None,
+    *,
+    thread_id: str | None = None,
 ) -> Iterator[str]:
     """추천 문장 조각과 완성된 추천곡을 순서대로 전송한다."""
 
     if not tracks:
-        yield sse("text", {"delta": NO_TRACKS_MESSAGE})
+        notice = count_notice(hints, 0)
+        yield sse("text", {"delta": f"{notice}\n\n{NO_TRACKS_MESSAGE}" if notice else NO_TRACKS_MESSAGE})
         yield sse("tracks", {"tracks": []})
         yield sse("done", {})
         return
@@ -51,9 +88,16 @@ def stream_answer(
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
+                    record_usage(getattr(getattr(event, "response", None), "usage", None), os.environ["LLM_MODEL"])
+                    notice = count_notice(hints, len(tracks))
+                    if notice:
+                        yield sse("text", {"delta": "\n\n" + notice})
+                    cards = [track.model_dump() for track in tracks]
+                    if thread_id:
+                        record_shown_tracks(thread_id, cards)
                     yield sse(
                         "tracks",
-                        {"tracks": [track.model_dump() for track in tracks]},
+                        {"tracks": cards},
                     )
                     yield sse("done", {})
                     return
@@ -73,12 +117,16 @@ def stream_answer(
         yield sse("error", {"detail": error_message})
 
 
+@traceable(name="조회 안내 생성", run_type="llm", reduce_fn=stream_result,
+           process_inputs=lambda values: {"request": values["message"]})
 def stream_lookup_answer(
     client: OpenAI,
     message: str,
     tracks: list[Track],
     user_context: UserContext | None,
     hints: AnswerHints | None = None,
+    *,
+    thread_id: str | None = None,
 ) -> Iterator[str]:
     """조회 결과 문장과 조회된 곡 카드를 순서대로 전송한다.
 
@@ -103,9 +151,16 @@ def stream_lookup_answer(
                     yield sse("text", {"delta": event.delta})
 
                 elif event.type == "response.completed":
+                    record_usage(getattr(getattr(event, "response", None), "usage", None), os.environ["LLM_MODEL"])
+                    notice = count_notice(hints, len(tracks))
+                    if notice:
+                        yield sse("text", {"delta": "\n\n" + notice})
+                    cards = [track.model_dump() for track in tracks]
+                    if thread_id:
+                        record_shown_tracks(thread_id, cards)
                     yield sse(
                         "tracks",
-                        {"tracks": [track.model_dump() for track in tracks]},
+                        {"tracks": cards},
                     )
                     yield sse("done", {})
                     return

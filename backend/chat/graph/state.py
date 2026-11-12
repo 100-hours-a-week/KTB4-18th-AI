@@ -22,7 +22,18 @@ class RecommendationState(TypedDict, total=False):
     # ── 대화 세션 동안 누적되는 기록. checkpointer가 thread_id별로 이어붙여준다 ──
     messages: Annotated[list[str], operator.add]
 
-    # ── classify_node가 채움 ──
+    # ── 고속 모드. classify_node가 켜고 jev_node가 끄며, checkpointer가 thread_id별로 기억한다 ──
+    # NOTE: 채팅방을 새로 열어도 thread_id가 바뀌어 일반 모드로 시작한다.
+    fast_mode: bool
+    # jev_node가 Jev 호출에 실패하면 True. route_by_jev가 보고 그 턴만 classify로 보낸다.
+    jev_failed: bool
+    # Jev가 미지원 조건(가사·순위·정확한 수치·주제 기준)을 감지하면 True. 그 턴만 classify로 보낸다.
+    jev_unsupported: bool
+    # 마지막 추천 턴의 검색 문장을 이루는 메시지들. 고속 모드 이어받기·재요청의 출발점이다.
+    # 추천 턴에서만 jev_node(고속 모드)나 classify_node(일반 모드)가 갱신한다.
+    search_parts: list[str]
+
+    # ── classify_node(고속 모드에선 jev_node)가 채움 ──
     intent: str
     recommend_has_enough_info: bool
     recommend_unsupported_condition: bool
@@ -42,7 +53,10 @@ class RecommendationState(TypedDict, total=False):
 
     # ── search_node가 채움 ──
     tracks: list[Track]
+
+    # ── SSE 곡 카드 전송 시 갱신 ──
     shown_track_ids: Annotated[list[str], _cap_shown_ids]
+    recent_tracks: list[dict]
 
     # ── lookup_node가 채움 ──
     lookup_status: str  # "found" | "ambiguous" | "not_found"
