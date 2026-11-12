@@ -38,13 +38,19 @@ REJECT_MESSAGES = {
 
 def recommend_scene(scene: Scene, thread_id: str) -> list[dict]:
     """사진 맥락을 메모리에 남기고 기존 임베딩·검색을 재사용한다."""
+    config = {"configurable": {"thread_id": thread_id}}
+    # NOTE: 사진은 새 추천 요청이라 에피소드를 새로 시작하고 지난 텍스트의 질문 횟수를 잇지 않는다.
+    episode = build_graph().get_state(config).values.get("episode", 0) + 1
     result = build_graph(photo=True).invoke({
         "message": scene.music_query,
         "messages": ["사진의 장소 맥락: " + scene.model_dump_json()],
         "intent": "recommend", "recommend_query": scene.music_query,
         "recommend_genres": None, "recommend_min_year": None, "recommend_max_year": None,
         "requested_count": None,
-    }, config={"configurable": {"thread_id": thread_id}})
+        "episode": episode, "question_count": 0, "followup_info": [], "asked_info": [], "known_info": [],
+        # 이전 텍스트 턴의 판정이 사진 결과로 새지 않게 덮어쓴다.
+        "recommend_unsupported_condition": False, "recommend_has_enough_info": True,
+    }, config=config)
     return [track.model_dump() for track in result["tracks"]]
 
 

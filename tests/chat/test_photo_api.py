@@ -359,3 +359,21 @@ def test_stream_closed_before_analysis_is_logged_as_aborted(monkeypatch, caplog)
     asyncio.run(first_event_then_close())
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Photo request:"))
     assert "provider=None outcome=aborted" in line
+
+
+def test_photo_starts_new_dialogue_episode(monkeypatch):
+    """사진 추천은 새 에피소드로 시작해 이전 텍스트의 질문 횟수를 이어받지 않는다."""
+    monkeypatch.setattr(nodes, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(nodes, "embed_query", lambda *_args: [1.0])
+    monkeypatch.setattr(nodes, "vector_recommendation", lambda *_args, **_kwargs: [])
+    thread = str(uuid4())
+    config = {"configurable": {"thread_id": thread}}
+    workflow.build_graph().update_state(config, {
+        "episode": 3, "question_count": 2,
+        "recommend_unsupported_condition": True, "recommend_has_enough_info": False,
+    }, as_node="search")
+    service.recommend_scene(scene(), thread)
+    values = workflow.build_graph().get_state(config).values
+    assert (values["episode"], values["question_count"], values["followup_info"]) == (4, 0, [])
+    # 이전 텍스트 턴의 판정이 사진 결과로 새지 않는다.
+    assert (values["recommend_unsupported_condition"], values["recommend_has_enough_info"]) == (False, True)
