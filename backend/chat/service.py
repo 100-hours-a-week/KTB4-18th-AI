@@ -7,6 +7,7 @@ from openai import OpenAI
 from db.types import Track
 from backend.chat.answer import AnswerHints
 from backend.core.errors import _model_unavailable
+from backend.observability import tag_request
 from backend.providers.openrouter import OPENROUTER_BASE_URL
 
 # NOTE: 안내 문구는 일단은 고정 문구로 하기로 선택했다.
@@ -87,6 +88,7 @@ def prepare_recommendation(message: str, thread_id: str) -> ChatOutcome:
     )
 
     intent = result["intent"]
+    tag_request(intent=intent, fast_mode=bool(result.get("fast_mode", False)))
     count = result.get("requested_count")
     if intent in ("recommend", "lookup") and count is not None and count < 1:
         return ChatOutcome(kind="static", text=CLARIFY_TEXT["invalid_count"])

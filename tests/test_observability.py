@@ -201,3 +201,31 @@ def test_staging_http_request_is_traced_without_revision(monkeypatch, traced_run
     assert root.outputs["text"] == "어떤 분위기의 음악을 찾으세요?"
     assert root.outputs["outcome"] == "completed"
     assert root.end_time is not None
+
+
+def test_request_root_records_intent_and_fast_mode(monkeypatch, traced_runs):
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    from backend.chat import router, service
+    from backend import observability
+
+    class Graph:
+        def invoke(self, *args, **kwargs):
+            return {"intent": "guide", "fast_mode": True}
+
+    monkeypatch.setenv("OPENROUTER_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setattr("backend.chat.graph.workflow.build_graph", lambda: Graph())
+    monkeypatch.setattr(router, "prepare_recommendation", service.prepare_recommendation)
+    client = Client(api_url="http://localhost:1984", auto_batch_tracing=False, info=LangSmithInfo())
+    monkeypatch.setattr(observability, "trace", lambda *args, **kwargs: trace(*args, client=client, **kwargs))
+    try:
+        response = TestClient(app).post("/v1/chat/messages", json={
+            "thread_id": str(uuid4()), "request_id": str(uuid4()), "message": "사용법 알려줘",
+        })
+    finally:
+        client.close()
+    root = next(r for r in traced_runs if r.name == "머문음 요청")
+    assert response.status_code == 200
+    assert root.metadata["intent"] == "guide"
+    assert root.metadata["fast_mode"] is True

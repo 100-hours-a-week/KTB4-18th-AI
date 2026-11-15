@@ -67,6 +67,15 @@ def record_usage(usage, model: str, *, provider: str = "openrouter") -> None:
                       "cost_available": usage.get("cost") is not None})
 
 
+def tag_request(**metadata) -> None:
+    """요청 루트 span에 서비스 안에서 정해지는 처리 경로를 붙여 경로별로 관찰한다."""
+    run = get_current_run_tree()
+    while run is not None and run.parent_run is not None:
+        run = run.parent_run
+    if run is not None and run.name == "머문음 요청":
+        run.add_metadata(metadata)
+
+
 def stream_result(chunks: list[str]) -> dict:
     """안내 생성 span에는 SSE 문법 대신 완성 문장을 보관한다."""
     text = []
