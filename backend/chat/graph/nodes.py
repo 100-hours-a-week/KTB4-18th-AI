@@ -31,6 +31,14 @@ def classify_node(state: RecommendationState, config: RunnableConfig) -> dict:
     result = classify(config["configurable"]["client"], messages)
     if result["intent"] == "fast_mode":
         result["fast_mode"] = True
+    # NOTE: 고속 모드 끄기는 보통 jev_node가 처리하지만, Jev가 실패하면 그 턴은 classify로 온다.
+    # 끄기를 몰랐을 땐 "고속 모드 꺼줘"를 켜기로 읽어 오히려 켜짐 안내가 나갔다.
+    # 고속 모드가 아닌데 끄라고 하면 끌 게 없으니 "모드 바꾸고 싶어"처럼 사용법 안내로 보낸다.
+    if result["intent"] == "fast_mode_off":
+        if state.get("fast_mode"):
+            result["fast_mode"] = False
+        else:
+            result["intent"] = "guide"
     # NOTE: 고속 모드의 이어받기·재요청은 "마지막으로 검색한 추천 턴의 검색 문장"(search_parts)에서 이어간다.
     # classify는 조회·모드 전환·사용법 턴에도 recommend_query를 채우므로(원문 그대로), 실제로 검색하는
     # 추천 턴(미지원·정보 부족이 아님)일 때만 남긴다. 안 그러면 "고속 모드 켜줘" 다음의 "다른 곡으로 더 줘"가

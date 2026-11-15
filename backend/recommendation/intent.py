@@ -57,6 +57,8 @@ artist로 조회하고, "그 곡 다시"는 해당 title과 artist를 모두 지
 의도 결정 순서
 먼저, 이번 메시지가 고속 모드·빠른 모드로 바꿔 달라는 모드 전환 자체를 요청하면 fast_mode입니다.
    예: "고속 모드 켜줘", "빠른 모드로 해줘", "설명 없이 곡만 빨리 줘".
+   반대로 고속 모드를 끄거나 일반 모드로 돌아가 달라는 요청은 fast_mode_off입니다.
+   예: "고속 모드 꺼줘", "일반 모드로 돌아가줘", "고속 모드 그만할래".
    "빠른 노래", "템포 빠른 곡"처럼 노래의 빠르기는 모드 전환이 아니라 노래 조건입니다.
    어떤 모드인지 말하지 않고 "모드 바꾸고 싶어"만 하면 guide입니다.
 1. 음악 요청과 다른 작업이 섞여 있으면 음악 부분으로 판단하고 has_non_music_request=true로 두세요.
@@ -150,6 +152,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
                                     "lookup",
                                     "out_of_scope",
                                     "fast_mode",
+                                    "fast_mode_off",
                                 ],
                             },
                             "recommend_has_enough_info": {"type": "boolean"},
@@ -195,7 +198,7 @@ def classify(client: OpenAI, messages: list[str]) -> dict:
         raise _model_unavailable() from error
 
     if not isinstance(data, dict) or data.get("intent") not in (
-        "recommend", "guide", "clarify", "lookup", "out_of_scope", "fast_mode"
+        "recommend", "guide", "clarify", "lookup", "out_of_scope", "fast_mode", "fast_mode_off"
     ):
         raise _model_unavailable()
 

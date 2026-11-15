@@ -165,6 +165,42 @@ def test_fast_mode_falls_back_to_classify_when_jev_fails(monkeypatch):
     assert result["fast_mode"] is True
 
 
+def test_fast_mode_turns_off_through_classify_when_jev_fails(monkeypatch):
+    classify_calls = []
+
+    def classify(_client, messages):
+        classify_calls.append(messages[-1])
+        if messages[-1] == "고속 모드 켜줘":
+            return {"intent": "fast_mode"}
+        return {"intent": "fast_mode_off"}
+
+    def decide(_state, _questions):
+        raise JevUnavailable("JEV_MODEL 없음")
+
+    monkeypatch.setattr(nodes, "classify", classify)
+    monkeypatch.setattr(nodes, "decide", decide)
+    monkeypatch.setattr(nodes, "artist_question", lambda: {})
+    monkeypatch.setattr(nodes, "genre_question", lambda: {})
+    monkeypatch.setattr(nodes, "year_questions", lambda: {})
+    monkeypatch.setattr(fast, "get_embedding_client", lambda: object())
+    monkeypatch.setattr(fast, "embed_query", lambda _client, text: [text])
+    config = {"configurable": {"thread_id": str(uuid4()), "client": object()}}
+
+    def send(message):
+        return workflow.build_graph().invoke({"message": message, "messages": [message]}, config=config)
+
+    send("고속 모드 켜줘")
+    # Jev가 실패해 끄기 요청이 classify로 와도 켜기로 읽지 않고 끈다.
+    turned_off = send("고속 모드 꺼줘")
+    assert turned_off["intent"] == "fast_mode_off"
+    assert turned_off["fast_mode"] is False
+    # 이미 일반 모드인데 또 끄라고 하면 끌 게 없으니 사용법 안내로 보낸다.
+    again = send("고속 모드 꺼줘")
+    assert again["intent"] == "guide"
+    assert again["fast_mode"] is False
+    assert classify_calls == ["고속 모드 켜줘", "고속 모드 꺼줘", "고속 모드 꺼줘"]
+
+
 def test_fast_repeat_continues_from_last_recommend_turn(monkeypatch):
     # 일반 모드 추천 → 조회 → 미지원 → 고속 모드 켜기 → 재요청 순서. 조회·미지원·켜기 턴에도 classify가
     # recommend_query를 채우지만, 재요청은 마지막으로 "검색한" 추천 턴의 문장으로 찾아야 한다.
