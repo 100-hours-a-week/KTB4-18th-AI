@@ -1,0 +1,27 @@
+# 이 폴더(실험 코드) 안에만 적용된다
+
+# 실행 결과·캐시 (평가자 이름이 든 사람 평가 결과 포함) — 게시할 결과는 results/에 따로 복사한다
+runs/
+
+# 비밀값
+.env
+.env.*
+
+# 데이터·체크포인트 (이 폴더에는 넣지 않는다. 원래 실험 폴더에서 읽기만 한다. 멜론 데이터셋은 재배포하지 않는다)
+*.npy
+*.npz
+*.pt
+*.db
+*.jsonl
+key_*.json
+catalog_*.json
+dataset*.json
+melon_to_track*.json
+track_extras.json
+tail_candidates.json
+pairs_*.json
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/

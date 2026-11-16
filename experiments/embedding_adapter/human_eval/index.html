@@ -1,0 +1,346 @@
+<title>블라인드 목록 비교</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 레이아웃: 위에 요청, 그 아래 같은 모양의 목록 세 개(가·나·다, 각자 등수 버튼), 화면 아래에 고정된 이동 막대 */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --ink: #18202b; --muted: #5d6878; --line: #d8dee7;
+  --accent: #2f5d8a; --accent-ink: #ffffff; --chip: #e6edf5; --good: #2e7d4f;
+  --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161d; --surface: #1a212b; --ink: #e6ebf2; --muted: #9aa6b6; --line: #2c3644;
+  --accent: #8fb4da; --accent-ink: #0f1620; --chip: #243142; --good: #7fcf9c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161d; --surface: #1a212b; --ink: #e6ebf2; --muted: #9aa6b6; --line: #2c3644;
+  --accent: #8fb4da; --accent-ink: #0f1620; --chip: #243142; --good: #7fcf9c; color-scheme: dark }
+
+* { box-sizing: border-box }
+html, body { background: var(--bg) }
+body { color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; margin: 0 }
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 132px; display: grid; gap: 16px }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px }
+h1 { font-size: 20px; font-weight: 700; margin: 0; text-wrap: balance }
+.progress { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px }
+.bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s }
+.guide { color: var(--muted); font-size: 14px; max-width: 70ch; margin: 0 }
+.query { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 8px }
+.query .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap }
+.chip { font-size: 12px; letter-spacing: .02em; background: var(--chip); color: var(--ink); padding: 2px 9px; border-radius: 999px }
+.qid { font-family: var(--mono); font-size: 12px; color: var(--muted) }
+.query p { margin: 0; font-size: 19px; font-weight: 600; text-wrap: balance; overflow-wrap: anywhere }
+.lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px }
+@media (max-width: 900px) { .lists { grid-template-columns: 1fr } }
+.list { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 12px; display: grid; gap: 8px; align-content: start }
+.list[data-rank="1"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) }
+.list h2 { font-size: 15px; margin: 0; font-weight: 700 }
+ol { list-style: none; margin: 0; padding: 0 }
+li { display: grid; grid-template-columns: 1.4em minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line) }
+li:first-child { border-top: 0 }
+.n { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
+.t b { font-weight: 600; display: block; overflow-wrap: anywhere; line-height: 1.35 }
+.t span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere }
+.play { font-size: 12px; padding: 5px 9px; color: var(--accent); white-space: nowrap; text-decoration: none; border: 1px solid var(--line); border-radius: 999px; background: transparent }
+.play[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.ranks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px }
+.ranks button { padding: 8px 0; font-weight: 600 }
+.ranks button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.choose { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: 10px; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) }
+.choose .row { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center }
+.mid { min-width: 0; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 10px }
+.summary { text-align: center; font-size: 13px; color: var(--muted); overflow-wrap: anywhere }
+.same { padding: 5px 10px; font-size: 13px }
+button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 10px 14px; cursor: pointer }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button:disabled { opacity: .4; cursor: default }
+.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600 }
+.status { font-size: 12px; color: var(--muted); text-align: center; max-width: 1180px; margin: 4px auto 0 }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 12px }
+.panel h2 { margin: 0; font-size: 18px }
+.panel p { margin: 0; max-width: 70ch }
+.field { display: grid; gap: 4px; max-width: 320px }
+.field label { font-size: 13px; color: var(--muted) }
+input, textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px }
+textarea { width: 100%; min-height: 84px; font-family: var(--mono); font-size: 12px; resize: vertical }
+.ok { color: var(--good) }
+@media (prefers-reduced-motion: reduce) { .bar > i { transition: none } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>블라인드 목록 비교</h1>
+    <span class="progress" id="progress">불러오는 중</span>
+  </header>
+  <div class="bar" aria-hidden="true"><i id="barfill"></i></div>
+  <p class="guide">요청마다 추천 목록 세 개가 나와요. 요청에 잘 맞는 순서대로 목록마다 등수를 정해 주세요. 차이를 모르겠는 목록끼리는 같은 등수를 줘도 돼요. 어느 목록이 어떤 방식인지는 알려드리지 않아요.</p>
+
+  <section class="panel" id="hello" hidden>
+    <h2>시작하기 전에</h2>
+    <div class="field">
+      <label for="who0">이름</label>
+      <input id="who0" type="text" autocomplete="off" placeholder="예: 민지">
+    </div>
+    <div><button class="primary" id="start" type="button">시작</button></div>
+  </section>
+
+  <section id="card" hidden>
+    <div class="query">
+      <div class="meta"><span class="chip" id="cat"></span><span class="qid" id="qid"></span></div>
+      <p id="query"></p>
+    </div>
+  </section>
+  <div class="lists" id="lists" hidden></div>
+
+  <section class="panel" id="done" hidden>
+    <h2>모두 끝났어요</h2>
+    <p id="doneText"></p>
+    <div class="field">
+      <label for="who">이름 (복사한 결과에 들어가요)</label>
+      <input id="who" type="text" autocomplete="off" placeholder="예: 민지">
+    </div>
+    <div><button id="copy" type="button">결과 복사</button> <span id="copyMsg" class="ok" aria-live="polite"></span></div>
+    <textarea id="code" readonly aria-label="결과 코드"></textarea>
+  </section>
+</div>
+
+<nav class="choose" id="choose" hidden>
+  <div class="row">
+    <button id="prev" type="button">← 이전</button>
+    <div class="mid"><span class="summary" id="summary"></span><button class="same" id="same" type="button">셋 다 비슷해요</button></div>
+    <button class="primary" id="next" type="button">다음 →</button>
+  </div>
+  <div class="status" id="status" aria-live="polite"></div>
+</nav>
+
+<audio id="player" preload="none"></audio>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const SET = location.hash === "#val" ? "val" : "test";
+const DRAFT = "ranking-draft-" + SET;
+const LABELS = ["가", "나", "다"];
+// 로컬 서버(같은 와이파이)에서 열리면 미리듣기를 페이지 안에서 재생하고 판정을 서버에 저장한다.
+// claude.ai에서 열리면 외부 음원을 못 불러오니 새 탭으로 열고, 아티팩트 저장소에 저장한다.
+const LOCAL = location.protocol === "http:";   // 로컬 서버는 http, claude.ai는 https
+let data = null, idx = 0, shownIdx = -1, answers = {}, draft = {}, ref = null, who = "", saving = Promise.resolve(), saveState = "none";
+
+function readDraft() { try { return JSON.parse(localStorage.getItem(DRAFT) || "{}"); } catch { return {}; } }
+function keepDraft() { try { localStorage.setItem(DRAFT, JSON.stringify({ name: data.name, who, answers })); } catch {} }
+
+// 같은 등수를 허용하고 빈 등수를 당긴다: {가:1, 나:1, 다:3} → {가:1, 나:1, 다:2}
+function dense(ranks) {
+  const levels = [...new Set(Object.values(ranks))].sort((a, b) => a - b);
+  return Object.fromEntries(Object.entries(ranks).map(([k, v]) => [k, levels.indexOf(v) + 1]));
+}
+
+const player = $("player");
+let playing = null;
+function togglePlay(btn, url) {
+  if (playing === btn) { player.pause(); return; }
+  if (playing) playing.setAttribute("aria-pressed", "false");
+  player.src = url; player.play().catch(() => {});
+  playing = btn; btn.setAttribute("aria-pressed", "true"); btn.textContent = "■ 정지";
+}
+player.addEventListener("pause", () => { if (playing) { playing.setAttribute("aria-pressed", "false"); playing.textContent = "▶ 듣기"; playing = null; } });
+player.addEventListener("ended", () => player.dispatchEvent(new Event("pause")));
+
+function trackRow(t, k) {
+  const el = document.createElement("li");
+  const n = document.createElement("span"); n.className = "n"; n.textContent = k + 1;
+  const tx = document.createElement("span"); tx.className = "t";
+  const b = document.createElement("b"); b.textContent = t.title;
+  const a = document.createElement("span"); a.textContent = t.artist;
+  tx.append(b, a); el.append(n, tx);
+  // NOTE: claude.ai에서는 미리듣기 파일(.m4a)을 새 탭으로 열면 브라우저가 재생 대신 내려받는다 → 애플 뮤직 곡 페이지로
+  const url = t.store || t.preview;
+  if (!url) { el.append(document.createElement("span")); return el; }
+  if (LOCAL && t.preview) {
+    const btn = document.createElement("button"); btn.className = "play"; btn.type = "button";
+    btn.textContent = "▶ 듣기"; btn.setAttribute("aria-pressed", "false"); btn.setAttribute("aria-label", `${t.title} 미리듣기`);
+    btn.addEventListener("click", () => togglePlay(btn, t.preview));
+    el.append(btn);
+  } else {
+    const link = document.createElement("a"); link.className = "play"; link.href = url; link.target = "_blank"; link.rel = "noopener";
+    link.textContent = "듣기 ↗"; link.setAttribute("aria-label", `${t.title} 애플 뮤직에서 듣기 (새 탭)`);
+    el.append(link);
+  }
+  return el;
+}
+
+function current() { return data.items[idx]; }
+function ranksOf(it) { return draft[it.id] || answers[it.id]?.ranks || {}; }
+
+function summaryText(it, r) {
+  const codes = it.lists.map((l) => l.code);
+  if (codes.some((c) => !r[c])) return `${codes.filter((c) => r[c]).length} / 3 목록에 등수를 정했어요`;
+  if (new Set(Object.values(r)).size === 1) return "셋 다 비슷해요";
+  return [1, 2, 3].map((k) => it.lists.map((l, i) => r[l.code] === k ? LABELS[i] : null).filter(Boolean).join(" = "))
+    .filter(Boolean).join("  >  ");
+}
+
+function render() {
+  const items = data.items;
+  const done = items.filter((it) => answers[it.id]).length;
+  $("progress").textContent = `${done} / ${items.length} 판정`;
+  $("barfill").style.width = `${(100 * done) / items.length}%`;
+  const finished = idx >= items.length;
+  $("card").hidden = $("lists").hidden = finished;
+  $("done").hidden = !finished;
+  $("prev").disabled = idx === 0;
+  same.disabled = finished;
+  // 요청이 바뀔 때만 재생을 멈춘다 (등수를 누를 때는 계속 듣게)
+  if (shownIdx !== idx && !player.paused) player.pause();
+  shownIdx = idx;
+  if (finished) { $("next").disabled = true; $("summary").textContent = ""; renderDone(done, items.length); return; }
+
+  const it = current(), r = ranksOf(it);
+  $("cat").textContent = it.group;
+  $("qid").textContent = `${idx + 1}번째 요청`;
+  $("query").textContent = it.prompt;
+  $("lists").replaceChildren(...it.lists.map((l, i) => {
+    const sec = document.createElement("section"); sec.className = "list";
+    if (r[l.code]) sec.dataset.rank = r[l.code];
+    const h2 = document.createElement("h2"); h2.textContent = `목록 ${LABELS[i]}`;
+    const ol = document.createElement("ol"); ol.append(...l.tracks.map(trackRow));
+    const ranks = document.createElement("div"); ranks.className = "ranks"; ranks.setAttribute("role", "group");
+    ranks.setAttribute("aria-label", `목록 ${LABELS[i]} 등수`);
+    [1, 2, 3].forEach((k) => {
+      const b = document.createElement("button"); b.type = "button"; b.textContent = `${k}등`;
+      b.setAttribute("aria-pressed", String(r[l.code] === k));
+      b.addEventListener("click", () => setRank(l.code, k));
+      ranks.append(b);
+    });
+    sec.append(h2, ol, ranks);
+    return sec;
+  }));
+  const complete = it.lists.every((l) => r[l.code]);
+  $("summary").textContent = summaryText(it, r);
+  $("next").disabled = !complete;
+  $("next").textContent = idx === items.length - 1 ? "마치기 →" : "다음 →";
+}
+
+function setRank(code, k) {
+  const it = current();
+  const r = { ...ranksOf(it), [code]: k };
+  const complete = it.lists.every((l) => r[l.code]);
+  draft[it.id] = complete ? dense(r) : r;
+  render();
+}
+
+function allSame() {
+  const it = current();
+  draft[it.id] = Object.fromEntries(it.lists.map((l) => [l.code, 1]));
+  render();
+}
+
+function commit() {
+  const it = current(), r = ranksOf(it);
+  if (!it.lists.every((l) => r[l.code])) return;
+  answers[it.id] = { ranks: dense(r), group: it.group, at: Date.now() };
+  delete draft[it.id];
+  keepDraft(); save();
+  idx = data.items.findIndex((x, k) => k > idx && !answers[x.id]);
+  if (idx < 0) idx = data.items.findIndex((x) => !answers[x.id]);
+  if (idx < 0) idx = data.items.length;
+  render(); window.scrollTo({ top: 0 });
+}
+
+function save() {
+  // NOTE: 한 번에 하나씩 쓴다. 앞 쓰기가 끝난 뒤 그 시점의 전체 답을 다시 쓴다
+  saving = saving.then(async () => {
+    const body = { name: data.name, who, answers, updatedAt: Date.now() };
+    try {
+      if (LOCAL) {
+        const res = await fetch("save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(res.status);
+      } else if (ref) {
+        await ref.set(body);
+      } else throw new Error("no store");
+      saveState = "saved"; $("status").textContent = "자동 저장됨";
+    } catch {
+      saveState = "failed";
+      $("status").textContent = "자동 저장이 안 돼요. 끝나면 결과 코드를 보내 주세요.";
+    }
+    if (idx >= data.items.length) render();
+  });
+}
+
+function resultCode() { return JSON.stringify({ name: data.name, who: $("who").value.trim() || who, answers }); }
+function renderDone(done, total) {
+  const saved = saveState === "saved" ? "판정은 자동으로 저장됐어요." : "자동 저장이 안 됐어요. 아래 결과 코드를 복사해서 보내 주세요.";
+  $("doneText").textContent = `${total}개 중 ${done}개를 판정했어요. ${saved} 고치고 싶으면 이전 버튼으로 돌아가면 돼요.`;
+  if (!$("who").value) $("who").value = who;
+  $("code").value = resultCode();
+}
+
+$("prev").addEventListener("click", () => { if (idx > 0) { idx -= 1; render(); window.scrollTo({ top: 0 }); } });
+$("next").addEventListener("click", commit);
+$("who").addEventListener("input", () => { $("code").value = resultCode(); });
+$("copy").addEventListener("click", async () => {
+  const text = resultCode();
+  try { await navigator.clipboard.writeText(text); $("copyMsg").textContent = "복사했어요"; }
+  catch { $("code").focus(); $("code").select(); $("copyMsg").textContent = "선택해 두었어요. 직접 복사해 주세요"; }
+});
+document.addEventListener("keydown", (e) => {
+  if (!data || idx >= data.items.length || e.target.closest("input, textarea") || $("hello").hidden === false) return;
+  if (e.key === "Enter" && !$("next").disabled) commit();
+});
+
+const same = $("same");
+same.addEventListener("click", allSame);
+
+async function connectArtifact() {
+  const [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
+  const uid = user ? await user.id() : null;
+  if (!db || !uid) { $("status").textContent = "이 화면에서는 자동 저장이 안 돼요. 끝나면 결과 코드를 보내 주세요."; return; }
+  ref = db.doc("judgments/" + uid);
+  try {
+    const snap = await ref.get();
+    const stored = snap.exists ? snap.data() : null;
+    if (stored?.sets?.[data.name]) {
+      answers = { ...answers, ...stored.sets[data.name].answers };
+      saveState = "saved";
+    }
+    // NOTE: 세트별로 칸을 나눠 저장한다 (val과 test를 같은 사람이 할 수 있다)
+    const set = ref.set.bind(ref);
+    ref = { set: (body) => set({ ...(stored || {}), sets: { ...(stored?.sets || {}), [data.name]: body } }) };
+    idx = data.items.findIndex((it) => !answers[it.id]);
+    if (idx < 0) idx = data.items.length;
+    $("status").textContent = "판정할 때마다 자동 저장돼요";
+    render();
+  } catch { ref = null; $("status").textContent = "자동 저장이 안 돼요. 끝나면 결과 코드를 보내 주세요."; }
+}
+
+function begin() {
+  $("hello").hidden = true; $("choose").hidden = false;
+  idx = data.items.findIndex((it) => !answers[it.id]);
+  if (idx < 0) idx = data.items.length;
+  render();
+}
+
+(async () => {
+  try { data = await (await fetch(`pairs_${SET}.json`)).json(); }
+  catch { $("progress").textContent = "평가 데이터를 불러오지 못했어요. 새로고침해 주세요."; return; }
+  const d = readDraft();
+  if (d.name === data.name) { answers = d.answers || {}; who = d.who || ""; }
+  if (LOCAL && !who) {
+    // 로컬 서버에는 로그인이 없어서 이름으로 사람을 구분한다
+    $("hello").hidden = false; $("progress").textContent = `0 / ${data.items.length} 판정`;
+    $("start").addEventListener("click", () => {
+      who = $("who0").value.trim();
+      if (!who) { $("who0").focus(); return; }
+      keepDraft(); begin();
+    });
+    return;
+  }
+  begin();
+  if (!LOCAL) connectArtifact();
+})();
+</script>

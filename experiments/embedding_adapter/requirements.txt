@@ -1,0 +1,14 @@
+# 실험·학습·평가 (core/, train/, studies/, human_eval/, dataset/의 로컬 스크립트)
+# 실험에 쓴 버전 (Python 3.13). torch는 팀 서비스 의존성(pyproject.toml)에 넣지 않는다 — 배포 이미지가 커진다
+numpy==1.26.4
+scipy==1.17.1
+torch==2.14.0
+
+# 데이터 준비 중 외부 API를 부르는 스크립트만 (dataset/3_tail_songs/c_embed_batch.py, dataset/7_embed_queries.py)
+openai==3.16.2
+python-dotenv==1.2.3
+google-genai==2.30.1
+imageio-ffmpeg==0.6.0   # 시스템 ffmpeg가 없을 때만 쓰인다
+
+# 팀 서비스 코드를 빌려 쓰는 스크립트(dataset/1_export_catalog.py, dataset/5_service_queries.py,
+# human_eval/export_track_extras.py)는 이 목록이 아니라 팀 저장소의 가상환경(uv)으로 실행한다
