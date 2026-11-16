@@ -21,7 +21,24 @@ def result(status, score=None, reason=""):
     return {"status": status, "score": score, "reason": reason}
 
 
-def score_turn(expected, actual, *, metrics=(), previous=()):
+# NOTE: "장소나 분위기를 알려주시면"처럼 정보를 나열하는 열린 질문은 걸리지 않게, 둘 중 고르게 하는 형태만 잡는다.
+BINARY_CHOICE = re.compile(
+    r"아니면|중(에서|에)? (어[느떤]|무엇|뭐|골라|하나)|쪽이 좋|어느 쪽|선호하는 쪽|\w/\w|\w+을지 [^.?!]*\w+을지"
+    r"|(세요|까요|좋아요|나요|가요)[,，].*(세요|까요|좋아요|나요|가요)\?"
+)
+# "카페에 계신지 야외에 계신지 알려주세요"처럼 쉼표 없이 이어진 두 선택지. "어디에 있으신지 어떤 분위기를
+# 원하시는지"처럼 열린 의문사로 여러 정보를 묻는 문장은 선택지가 아니므로 뺀다.
+PARALLEL_CHOICE = re.compile(r"\w+지 (?:[^,.?!]* )?\w+지 (알려|골라|말씀|선택)")
+OPEN_WORD = re.compile(r"어디|무엇|뭐|어떤|어떻게|언제|누구")
+
+
+def binary_choice(text):
+    return bool(BINARY_CHOICE.search(text)) or any(
+        not OPEN_WORD.search(m.group(0)) for m in PARALLEL_CHOICE.finditer(text)
+    )
+
+
+def score_turn(expected, actual, *, metrics=(), previous=(), before=None):
     scores = {}
     if actual.get("error") or not actual.get("done"):
         return {
@@ -53,6 +70,23 @@ def score_turn(expected, actual, *, metrics=(), previous=()):
             )
         elif key == "cards":
             check(key, len(tracks) == value)
+        elif key == "asks":
+            # 같은 에피소드면 이전 턴 대비, 새 에피소드면 0 대비 전달된 질문 수를 본다. 상태가 없으면 실패다.
+            same = before is not None and before.get("episode") == state.get("episode")
+            base = before.get("question_count", 0) if same else 0
+            count = state.get("question_count")
+            check(key, state.get("episode") is not None and count is not None
+                  and (count == base + 1 if value else count == base))
+        elif key == "episode":
+            # 새 에피소드는 이전 번호(없으면 0)에서 정확히 1 늘어야 한다.
+            now, prev = state.get("episode"), (before or {}).get("episode")
+            new = now is not None and now == (prev or 0) + 1
+            same = now is not None and prev is not None and prev == now
+            check(key, new if value == "new" else same)
+        elif key == "query_includes_any":
+            check(key, any(word in (state.get("recommend_query") or "") for word in value))
+        elif key == "no_binary_choice":
+            check(key, (not binary_choice(actual.get("text", ""))) == value)
         elif key == "response_style_present":
             check(key, bool(state.get("response_style")) == value)
         elif key in ("lookup_track_ids_any", "lookup_track_ids_if_found"):
@@ -155,15 +189,17 @@ def genre_claim_ok(text, tracks):
 
 def score_case(case):
     """저장된 실행값만 다시 채점한다. 모델·DB는 호출하지 않는다."""
-    previous = set()
+    previous, before = set(), None
     for turn in case["turns"]:
         turn["scores"] = score_turn(
             turn["expected"],
             turn["actual"],
             metrics=case["metadata"].get("metrics", []),
             previous=previous,
+            before=before,
         )
         previous.update(str(t["track_id"]) for t in turn["actual"].get("tracks", []))
+        before = turn["actual"].get("state")
     return case
 
 
@@ -173,10 +209,10 @@ def route_of(state):
         outcome = (
             "unsupported"
             if state.get("recommend_unsupported_condition")
-            else "insufficient"
-            if state.get("recommend_has_enough_info") is False
             else "tracks"
             if state.get("tracks")
+            else "insufficient"
+            if state.get("recommend_has_enough_info") is False
             else "no_tracks"
         )
     elif intent == "lookup":
